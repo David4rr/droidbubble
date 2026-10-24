@@ -142,7 +142,7 @@ fun IslandOverlayRoot(
 
     // Animation Specs:
     // Expand: subtle bounce outwards (spring damping 0.74f)
-    // Minimise: smooth ease-in-and-out curve that minimises smoothly before reaching the camera cutout
+    // Minimise: smooth monotonic ease-in-and-out curve that minimises smoothly before reaching the camera cutout
     val currentAnimSpecDp = if (isExpanded) {
         spring<androidx.compose.ui.unit.Dp>(
             dampingRatio = 0.74f, // subtle organic overshoot bounce on expand
@@ -150,8 +150,8 @@ fun IslandOverlayRoot(
         )
     } else {
         tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = 340,
-            easing = CubicBezierEasing(0.36f, 0.0f, 0.16f, 1.0f) // smooth ease-in-and-out curve
+            durationMillis = 350,
+            easing = FastOutSlowInEasing // completely smooth, monotonic, zero glitching
         )
     }
 
@@ -162,8 +162,8 @@ fun IslandOverlayRoot(
         )
     } else {
         tween<Float>(
-            durationMillis = 340,
-            easing = CubicBezierEasing(0.36f, 0.0f, 0.16f, 1.0f)
+            durationMillis = 350,
+            easing = FastOutSlowInEasing
         )
     }
 
@@ -209,7 +209,7 @@ fun IslandOverlayRoot(
     }
 
     val targetTopOffset = if (isExpanded) {
-        (settings.topOffsetDp + 46).dp // Sits way below initial position (comfortably below status bar) when expanded!
+        (settings.topOffsetDp + 52).dp // Sits way below initial position (comfortably below status bar) when expanded!
     } else {
         settings.topOffsetDp.dp // Docks right over the punch hole when minimised
     }
@@ -418,14 +418,16 @@ fun IslandOverlayRoot(
                 }
             }
 
-            // Auxiliary Circular Island Bubble: Placed strictly to the RIGHT of the main pill
-            // Never overlaps or comes near the center punch-hole!
+            // Auxiliary Circular Island Bubble: Placed strictly to the RIGHT of the compact pill
+            // Never overlaps or comes near the center punch-hole, and does NOT fly across from the expanded card!
             if (animatedBubbleSize > 3.dp && isDual) {
+                val compactMainHalf = (settings.widthDp * 0.74f).dp / 2f
                 val bubbleOffsetXPx = with(LocalDensity.current) {
-                    ((animatedMainWidth / 2) + animatedGap + (animatedBubbleSize / 2)).roundToPx()
+                    (compactMainHalf + animatedGap + (animatedBubbleSize / 2)).roundToPx()
                 }
 
-                val bubbleAlpha = (1f - (expandProgress * 3f)).coerceIn(0f, 1f)
+                // Bubble only fades in once island is almost back to compact mode (never flying across mid-collapse!)
+                val bubbleAlpha = if (isExpanded) 0f else ((1f - expandProgress * 3.5f).coerceIn(0f, 1f))
 
                 Box(
                     modifier = Modifier

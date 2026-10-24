@@ -309,6 +309,7 @@ class IslandOverlayService : Service() {
         }
     }
 
+    private var isCollapsing = false
     private var collapseJob: kotlinx.coroutines.Job? = null
     private var wasExpanded = false
 
@@ -317,9 +318,9 @@ class IslandOverlayService : Service() {
         val params = layoutParams ?: return
         val density = resources.displayMetrics.density
 
-        collapseJob?.cancel()
-
         if (expanded) {
+            collapseJob?.cancel()
+            isCollapsing = false
             wasExpanded = true
             // Full screen touch area to allow tapping outside to dismiss
             params.width = WindowManager.LayoutParams.MATCH_PARENT
@@ -361,17 +362,25 @@ class IslandOverlayService : Service() {
                 }
             }
 
+            // If a collapse animation is currently in progress, do NOT interrupt or resize early!
+            if (isCollapsing) {
+                return
+            }
+
             if (wasExpanded) {
                 wasExpanded = false
-                // Keep MATCH_PARENT for 370ms so the user sees the collapse animation smoothly finish!
+                isCollapsing = true
+                // Keep MATCH_PARENT for 400ms so the user sees the collapse animation smoothly finish in full!
                 collapseJob = serviceScope.launch {
-                    kotlinx.coroutines.delay(370)
+                    kotlinx.coroutines.delay(400)
+                    isCollapsing = false
                     if (!IslandStateManager.isExpanded.value) {
                         applyCompactBounds()
                     }
                 }
             } else if (!isOccupied) {
                 // When unoccupied, keep bounds briefly for the smooth shrink-to-middle animation, then collapse
+                collapseJob?.cancel()
                 collapseJob = serviceScope.launch {
                     kotlinx.coroutines.delay(360)
                     if (!IslandStateManager.isOccupied && !IslandStateManager.isExpanded.value) {
