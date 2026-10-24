@@ -48,8 +48,14 @@ class NotificationReceiverService : NotificationListenerService() {
         }
 
         override fun onSessionDestroyed() {
-            activeMediaController = null
-            IslandStateManager.updateMedia(null)
+            try {
+                val componentName = ComponentName(this@NotificationReceiverService, NotificationReceiverService::class.java)
+                val remaining = mediaSessionManager?.getActiveSessions(componentName)
+                updateActiveMediaController(remaining)
+            } catch (e: Exception) {
+                activeMediaController = null
+                IslandStateManager.updateMedia(null)
+            }
         }
     }
 
@@ -123,10 +129,49 @@ class NotificationReceiverService : NotificationListenerService() {
         serviceScope.cancel()
     }
 
+    private fun findBestController(controllers: List<MediaController>?): MediaController? {
+        if (controllers.isNullOrEmpty()) return null
+
+        // 1. Prioritize any controller that is currently actively playing
+        val playing = controllers.firstOrNull {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        }
+        if (playing != null) return playing
+
+        // 2. If current active controller is still in list and has metadata, keep it (do not switch just because a new app opened)
+        val current = activeMediaController
+        if (current != null) {
+            val stillPresent = controllers.firstOrNull { it.packageName == current.packageName }
+            if (stillPresent != null && stillPresent.metadata != null) {
+                return stillPresent
+            }
+        }
+
+        // 3. Otherwise find any controller with valid metadata
+        val withMeta = controllers.firstOrNull {
+            val title = it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
+                ?: it.metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+            !title.isNullOrBlank()
+        }
+        if (withMeta != null) return withMeta
+
+        return controllers.firstOrNull()
+    }
+
     private fun updateActiveMediaController(controllers: List<MediaController>?) {
-        activeMediaController?.unregisterCallback(mediaCallback)
-        activeMediaController = controllers?.firstOrNull()
-        activeMediaController?.registerCallback(mediaCallback)
+        val best = findBestController(controllers)
+        if (best == null) {
+            activeMediaController?.unregisterCallback(mediaCallback)
+            activeMediaController = null
+            IslandStateManager.updateMedia(null)
+            return
+        }
+
+        if (best.packageName != activeMediaController?.packageName) {
+            activeMediaController?.unregisterCallback(mediaCallback)
+            activeMediaController = best
+            activeMediaController?.registerCallback(mediaCallback)
+        }
         updateMediaInfo()
     }
 
@@ -158,14 +203,11 @@ class NotificationReceiverService : NotificationListenerService() {
             ?: metadata?.getString(MediaMetadata.METADATA_KEY_AUTHOR)
             ?: controller.packageName
 
-        var artBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+        val artBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
 
-        if (artBitmap == null) {
-            // Fallback to app icon
-            artBitmap = getAppIconBitmap(controller.packageName)
-        }
+        val appIconBitmap = getAppIconBitmap(controller.packageName)
 
         val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
         val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
@@ -177,6 +219,8 @@ class NotificationReceiverService : NotificationListenerService() {
                 title = title,
                 artist = artist,
                 albumArt = artBitmap,
+                appIcon = appIconBitmap,
+                sessionActivity = controller.sessionActivity,
                 isPlaying = isPlaying,
                 durationMs = duration,
                 positionMs = position
@@ -200,9 +244,15 @@ class NotificationReceiverService : NotificationListenerService() {
             return
         }
 
-        // Skip ongoing or progress-only system notifications unless active alert
+        // Extract live progress tracking (e.g. Google Play Store, downloads, transfers)
+        val progress = extras.getInt(Notification.EXTRA_PROGRESS, -1)
+        val maxProgress = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+        val isIndeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
+        val hasProgress = maxProgress > 0 || isIndeterminate || (progress >= 0 && maxProgress > 0)
+
+        // Skip ongoing notifications UNLESS they report live progress (e.g. downloads)
         val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
-        if (isOngoing) return
+        if (isOngoing && !hasProgress) return
 
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString()
@@ -238,7 +288,11 @@ class NotificationReceiverService : NotificationListenerService() {
             iconBitmap = iconBitmap,
             contentIntent = notification.contentIntent,
             actions = actions.take(3),
-            timestamp = sbn.postTime
+            timestamp = sbn.postTime,
+            progress = progress,
+            maxProgress = maxProgress,
+            isIndeterminate = isIndeterminate,
+            isOngoing = isOngoing
         )
 
         IslandStateManager.updateNotification(notifInfo)

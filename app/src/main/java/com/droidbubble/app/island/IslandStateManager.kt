@@ -61,10 +61,12 @@ object IslandStateManager {
     val isMediaActive: Boolean
         get() {
             val media = _activeMedia.value ?: return false
-            if (media.isPlaying) return true
-            // If recently paused (within 10 seconds), keep active
-            return (System.currentTimeMillis() - lastMediaPlayingTime < 10000L) && media.title.isNotBlank()
+            // Keep active whenever a media session exists with a title so the island remains visible & expandable when paused!
+            return media.title.isNotBlank()
         }
+
+    val isProgressActive: Boolean
+        get() = _activeNotification.value?.hasProgress == true
 
     val isOccupied: Boolean
         get() = isRecordingActive || isNotificationActive || isMediaActive
@@ -74,6 +76,7 @@ object IslandStateManager {
         get() {
             return when {
                 _screenRecordingState.value.isRecording -> IslandPriority.SCREEN_RECORDING
+                isProgressActive -> IslandPriority.PROGRESS
                 _isPopInActive.value && _activeNotification.value != null -> IslandPriority.POP_NOTIFICATION
                 _activeMedia.value?.isPlaying == true -> IslandPriority.MEDIA
                 _activeNotification.value != null -> IslandPriority.POP_NOTIFICATION
@@ -95,7 +98,13 @@ object IslandStateManager {
     fun updateNotification(notification: NotificationInfo?) {
         _activeNotification.value = notification
         if (notification != null) {
-            triggerPopIn()
+            if (notification.hasProgress) {
+                // Live progress task: keep active continuously while downloading
+                _isPopInActive.value = true
+                popInJob?.cancel()
+            } else {
+                triggerPopIn()
+            }
         }
     }
 
@@ -108,13 +117,14 @@ object IslandStateManager {
         }
     }
 
-    fun dismissCurrentNotification() {
-        val notif = _activeNotification.value
-        if (notif != null) {
-            onDismissNotification?.invoke(notif.key)
-            _activeNotification.value = null
-            _isPopInActive.value = false
-        }
+    fun dismissCurrentNotification(): Boolean {
+        val notif = _activeNotification.value ?: return false
+        // Live tasks with progress cannot be dismissed by swiping
+        if (notif.hasProgress) return false
+        onDismissNotification?.invoke(notif.key)
+        _activeNotification.value = null
+        _isPopInActive.value = false
+        return true
     }
 
     fun updateRecordingState(state: ScreenRecordingState) {

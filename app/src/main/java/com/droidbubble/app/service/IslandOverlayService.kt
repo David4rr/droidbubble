@@ -109,15 +109,45 @@ class IslandOverlayService : Service() {
                     )
                 }
                 "com.droidbubble.app.ACTION_SIMULATE_NOTIFICATION" -> {
-                    val title = intent.getStringExtra("title") ?: "WhatsApp"
-                    val text = intent.getStringExtra("text") ?: "Hey! Are you coming to dinner?"
+                    val title = intent.getStringExtra("title") ?: "Sarah Jenkins"
+                    val appName = intent.getStringExtra("appName") ?: "Messages"
+                    val text = intent.getStringExtra("text") ?: "Dinner is ready! Can you pick up some dessert on your way home?"
+                    val action1 = intent.getStringExtra("action1") ?: "Reply"
+                    val action2 = intent.getStringExtra("action2")
+                    val actionsList = mutableListOf<com.droidbubble.app.model.NotificationAction>()
+                    if (action1.isNotBlank() && action1 != "none") {
+                        actionsList.add(com.droidbubble.app.model.NotificationAction(action1, null))
+                    }
+                    if (!action2.isNullOrBlank()) {
+                        actionsList.add(com.droidbubble.app.model.NotificationAction(action2, null))
+                    }
                     IslandStateManager.updateNotification(
                         NotificationInfo(
                             key = "debug_notif_1",
-                            packageName = "com.whatsapp",
-                            appName = "WhatsApp",
+                            packageName = "com.google.android.apps.messaging",
+                            appName = appName,
                             title = title,
-                            text = text
+                            text = text,
+                            actions = actionsList
+                        )
+                    )
+                }
+                "com.droidbubble.app.ACTION_SIMULATE_PROGRESS" -> {
+                    val progress = intent.getIntExtra("progress", 68)
+                    val maxProgress = intent.getIntExtra("max", 100)
+                    val appName = intent.getStringExtra("appName") ?: "Google Play Store"
+                    val title = intent.getStringExtra("title") ?: "Updating Spotify"
+                    val text = intent.getStringExtra("text") ?: "45 MB / 66 MB • 3.2 MB/s"
+                    IslandStateManager.updateNotification(
+                        NotificationInfo(
+                            key = "debug_progress_1",
+                            packageName = "com.android.vending",
+                            appName = appName,
+                            title = title,
+                            text = text,
+                            progress = progress,
+                            maxProgress = maxProgress,
+                            isOngoing = true
                         )
                     )
                 }
@@ -156,6 +186,7 @@ class IslandOverlayService : Service() {
         val filter = IntentFilter().apply {
             addAction("com.droidbubble.app.ACTION_SIMULATE_MEDIA")
             addAction("com.droidbubble.app.ACTION_SIMULATE_NOTIFICATION")
+            addAction("com.droidbubble.app.ACTION_SIMULATE_PROGRESS")
             addAction("com.droidbubble.app.ACTION_SIMULATE_RECORDING")
             addAction("com.droidbubble.app.ACTION_EXPAND")
             addAction("com.droidbubble.app.ACTION_COLLAPSE")
@@ -213,6 +244,48 @@ class IslandOverlayService : Service() {
         }
     }
 
+    private var touchManager: IslandTouchManager? = null
+
+    private fun disableMoveAnimation(params: WindowManager.LayoutParams) {
+        try {
+            val field = WindowManager.LayoutParams::class.java.getField("privateFlags")
+            val current = field.getInt(params)
+            field.setInt(params, current or 0x00000040)
+        } catch (_: Exception) {}
+    }
+
+    private fun updateTouchBounds(isExpanded: Boolean) {
+        val manager = touchManager ?: return
+        val density = resources.displayMetrics.density
+        val screenWidth = resources.displayMetrics.widthPixels
+        val centerX = screenWidth / 2 + (currentSettings.horizontalOffsetDp * density).toInt()
+        val top = (currentSettings.topOffsetDp * density).toInt()
+        val height = (currentSettings.heightDp * density).toInt()
+
+        val isOccupied = IslandStateManager.isOccupied
+        val isDual = (if (IslandStateManager.isRecordingActive) 1 else 0) +
+                (if (IslandStateManager.isNotificationActive) 1 else 0) +
+                (if (IslandStateManager.isMediaActive) 1 else 0) +
+                (if (IslandStateManager.isProgressActive) 1 else 0) >= 2
+
+        val rects = mutableListOf<android.graphics.Rect>()
+        if (isDual) {
+            val mainHalf = ((currentSettings.widthDp * 0.74f / 2f) * density).toInt()
+            val pillRect = android.graphics.Rect(centerX - mainHalf - 14, top - 14, centerX + mainHalf + 14, top + height + 14)
+            val gapPx = (8 * density).toInt()
+            val bubbleSizePx = height
+            val bubbleLeft = centerX + mainHalf + gapPx
+            val bubbleRect = android.graphics.Rect(bubbleLeft - 14, top - 14, bubbleLeft + bubbleSizePx + 14, top + height + 14)
+            rects.add(pillRect)
+            rects.add(bubbleRect)
+        } else if (isOccupied) {
+            val halfW = ((currentSettings.widthDp / 2f) * density).toInt()
+            rects.add(android.graphics.Rect(centerX - halfW - 14, top - 14, centerX + halfW + 14, top + height + 14))
+        }
+
+        manager.updateCompactBounds(rects, isOccupied, isExpanded)
+    }
+
     @OptIn(ExperimentalMaterial3ExpressiveApi::class)
     private fun initOverlay() {
         if (composeView != null) return
@@ -225,11 +298,10 @@ class IslandOverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
-        val initialWidth = ((currentSettings.widthDp + 32) * density).toInt()
         val initialHeight = ((currentSettings.topOffsetDp + currentSettings.heightDp + 16) * density).toInt()
 
         layoutParams = WindowManager.LayoutParams(
-            initialWidth,
+            WindowManager.LayoutParams.MATCH_PARENT,
             initialHeight,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -239,15 +311,17 @@ class IslandOverlayService : Service() {
             flags,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = (currentSettings.horizontalOffsetDp * density).toInt()
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
             y = 0
+            windowAnimations = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
         }
+        disableMoveAnimation(layoutParams!!)
 
         val view = ComposeView(this).apply {
             setViewTreeLifecycleOwner(lifecycleOwner)
@@ -271,6 +345,11 @@ class IslandOverlayService : Service() {
         }
 
         composeView = view
+        val manager = IslandTouchManager(view)
+        touchManager = manager
+        manager.attach()
+        updateTouchBounds(IslandStateManager.isExpanded.value)
+
         try {
             windowManager?.addView(view, layoutParams)
         } catch (e: Exception) {
@@ -322,35 +401,29 @@ class IslandOverlayService : Service() {
             collapseJob?.cancel()
             isCollapsing = false
             wasExpanded = true
+            updateTouchBounds(true)
             // Full screen touch area to allow tapping outside to dismiss
             params.width = WindowManager.LayoutParams.MATCH_PARENT
             params.height = WindowManager.LayoutParams.MATCH_PARENT
             params.x = 0
             params.y = 0
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            disableMoveAnimation(params)
             runCatching { windowManager?.updateViewLayout(view, params) }
         } else {
             val isOccupied = IslandStateManager.isOccupied
-            val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
-                    (if (IslandStateManager.isNotificationActive) 1 else 0) +
-                    (if (IslandStateManager.isMediaActive) 1 else 0)
-            val isDual = activeCount >= 2
-
-            val totalWidthDp = if (isDual) {
-                val mainHalf = (currentSettings.widthDp * 0.74f) / 2f
-                val rightEdge = mainHalf + 8f + currentSettings.heightDp + 16f
-                (rightEdge * 2f).coerceAtLeast(currentSettings.widthDp + 24f)
-            } else {
-                currentSettings.widthDp + 24f
-            }
+            updateTouchBounds(false)
 
             fun applyCompactBounds() {
+                updateTouchBounds(false)
                 if (isOccupied) {
-                    params.width = (totalWidthDp * density).toInt()
+                    // ALWAYS keep width MATCH_PARENT so the window NEVER shifts horizontally on screen!
+                    params.width = WindowManager.LayoutParams.MATCH_PARENT
                     params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 16) * density).toInt()
-                    params.x = (currentSettings.horizontalOffsetDp * density).toInt()
+                    params.x = 0
                     params.y = 0
                     params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                    disableMoveAnimation(params)
                     runCatching { windowManager?.updateViewLayout(view, params) }
                 } else {
                     params.width = 1
@@ -358,6 +431,7 @@ class IslandOverlayService : Service() {
                     params.x = 0
                     params.y = 0
                     params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    disableMoveAnimation(params)
                     runCatching { windowManager?.updateViewLayout(view, params) }
                 }
             }
@@ -389,6 +463,7 @@ class IslandOverlayService : Service() {
                         params.x = 0
                         params.y = 0
                         params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        disableMoveAnimation(params)
                         runCatching { windowManager?.updateViewLayout(view, params) }
                     }
                 }
@@ -399,6 +474,8 @@ class IslandOverlayService : Service() {
     }
 
     private fun removeOverlay() {
+        touchManager?.detach()
+        touchManager = null
         composeView?.let { view ->
             try {
                 windowManager?.removeView(view)

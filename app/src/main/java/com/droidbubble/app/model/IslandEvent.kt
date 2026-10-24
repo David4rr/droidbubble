@@ -8,6 +8,8 @@ data class MediaInfo(
     val title: String,
     val artist: String,
     val albumArt: Bitmap? = null,
+    val appIcon: Bitmap? = null,
+    val sessionActivity: PendingIntent? = null,
     val isPlaying: Boolean = false,
     val durationMs: Long = 0L,
     val positionMs: Long = 0L
@@ -27,8 +29,18 @@ data class NotificationInfo(
     val iconBitmap: Bitmap? = null,
     val contentIntent: PendingIntent? = null,
     val actions: List<NotificationAction> = emptyList(),
-    val timestamp: Long = System.currentTimeMillis()
-)
+    val timestamp: Long = System.currentTimeMillis(),
+    val progress: Int = -1,
+    val maxProgress: Int = 0,
+    val isIndeterminate: Boolean = false,
+    val isOngoing: Boolean = false
+) {
+    val hasProgress: Boolean
+        get() = maxProgress > 0 || isIndeterminate || (progress >= 0 && maxProgress > 0)
+
+    val progressFraction: Float
+        get() = if (maxProgress > 0 && progress >= 0) (progress.toFloat() / maxProgress).coerceIn(0f, 1f) else 0f
+}
 
 data class ScreenRecordingState(
     val isRecording: Boolean = false,
@@ -38,6 +50,7 @@ data class ScreenRecordingState(
 
 enum class IslandPriority {
     SCREEN_RECORDING,
+    PROGRESS,
     POP_NOTIFICATION,
     MEDIA,
     IDLE
