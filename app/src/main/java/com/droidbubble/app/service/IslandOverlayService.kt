@@ -225,8 +225,8 @@ class IslandOverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
-        val initialWidth = ((currentSettings.widthDp + 16) * density).toInt()
-        val initialHeight = ((currentSettings.heightDp + 16) * density).toInt()
+        val initialWidth = ((currentSettings.widthDp + 32) * density).toInt()
+        val initialHeight = ((currentSettings.topOffsetDp + currentSettings.heightDp + 16) * density).toInt()
 
         layoutParams = WindowManager.LayoutParams(
             initialWidth,
@@ -241,13 +241,19 @@ class IslandOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             x = (currentSettings.horizontalOffsetDp * density).toInt()
-            y = (currentSettings.topOffsetDp * density).toInt()
+            y = 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
 
         val view = ComposeView(this).apply {
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(lifecycleOwner)
+            fitsSystemWindows = false
 
             setContent {
                 val liveSettings by settingsRepository.settingsFlow.collectAsState(initial = currentSettings)
@@ -278,9 +284,12 @@ class IslandOverlayService : Service() {
                 IslandStateManager.activeMedia,
                 IslandStateManager.activeNotification,
                 IslandStateManager.screenRecordingState
-            ) { expanded, _, _, _ ->
-                expanded
-            }.collectLatest { expanded ->
+            ) { expanded, media, notif, rec ->
+                val activeCount = (if (rec.isRecording) 1 else 0) +
+                        (if (notif != null) 1 else 0) +
+                        (if (media != null && (media.isPlaying || media.title.isNotBlank())) 1 else 0)
+                expanded to activeCount
+            }.collectLatest { (expanded, _) ->
                 updateWindowState(expanded)
             }
         }
@@ -337,14 +346,16 @@ class IslandOverlayService : Service() {
             fun applyCompactBounds() {
                 if (isOccupied) {
                     params.width = (totalWidthDp * density).toInt()
-                    params.height = ((currentSettings.heightDp + 20) * density).toInt()
+                    params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 16) * density).toInt()
                     params.x = (currentSettings.horizontalOffsetDp * density).toInt()
-                    params.y = (currentSettings.topOffsetDp * density).toInt()
+                    params.y = 0
                     params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
                     runCatching { windowManager?.updateViewLayout(view, params) }
                 } else {
                     params.width = 1
                     params.height = 1
+                    params.x = 0
+                    params.y = 0
                     params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                     runCatching { windowManager?.updateViewLayout(view, params) }
                 }
@@ -366,6 +377,8 @@ class IslandOverlayService : Service() {
                     if (!IslandStateManager.isOccupied && !IslandStateManager.isExpanded.value) {
                         params.width = 1
                         params.height = 1
+                        params.x = 0
+                        params.y = 0
                         params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         runCatching { windowManager?.updateViewLayout(view, params) }
                     }

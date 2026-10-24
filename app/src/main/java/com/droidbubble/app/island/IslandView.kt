@@ -6,6 +6,7 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -138,49 +139,52 @@ fun IslandOverlayRoot(
         else -> null
     }
 
-    // Spring physics: subtle bounce ONLY when expanding; critically damped (no bounce) on collapse/minimise
-    val currentSpringDp = if (isExpanded) {
+    // Animation Specs:
+    // Expand: subtle bounce outwards (spring damping 0.74f)
+    // Minimise: smooth ease-in-and-out curve that minimises smoothly before reaching the camera cutout
+    val currentAnimSpecDp = if (isExpanded) {
         spring<androidx.compose.ui.unit.Dp>(
             dampingRatio = 0.74f, // subtle organic overshoot bounce on expand
             stiffness = 380f
         )
     } else {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 1.0f, // critically damped (no bounce) when minimising
-            stiffness = 450f
+        tween<androidx.compose.ui.unit.Dp>(
+            durationMillis = 340,
+            easing = CubicBezierEasing(0.36f, 0.0f, 0.16f, 1.0f) // smooth ease-in-and-out curve
         )
     }
 
-    val currentSpringFloat = if (isExpanded) {
+    val currentAnimSpecFloat = if (isExpanded) {
         spring<Float>(
             dampingRatio = 0.74f,
             stiffness = 380f
         )
     } else {
-        spring<Float>(
-            dampingRatio = 1.0f,
-            stiffness = 450f
+        tween<Float>(
+            durationMillis = 340,
+            easing = CubicBezierEasing(0.36f, 0.0f, 0.16f, 1.0f)
         )
     }
 
     val expandProgress by animateFloatAsState(
         targetValue = if (isExpanded) 1f else 0f,
-        animationSpec = currentSpringFloat,
+        animationSpec = currentAnimSpecFloat,
         label = "expandProgress"
     )
 
-    // Target dimensions
+    // Target dimensions:
+    // When minimised, height is STRICTLY fixed at settings.heightDp.dp (never changes or mixes up!)
+    // Resizing is purely horizontal: width shrinks to 0 when idle, expands to widthDp with 1 action,
+    // or splits into (widthDp * 0.74) + circular auxiliary bubble in dual mode.
     val targetMainWidth = when {
         isExpanded -> (340.dp * settings.expandedScale)
         !isOccupied -> 0.dp // Disappears into the middle horizontally!
-        isDual -> (settings.widthDp * 0.74f).dp // Main pill centered around punch-hole
-        isPopIn -> (settings.widthDp * 1.35f).dp
+        isDual -> (settings.widthDp * 0.74f).dp // Main pill centered around punch-hole in dual mode
         else -> settings.widthDp.dp
     }
 
     val targetHeight = when {
         isExpanded -> (185.dp * settings.expandedScale)
-        isPopIn -> (settings.heightDp.dp * 1.3f)
         else -> settings.heightDp.dp
     }
 
@@ -203,13 +207,13 @@ fun IslandOverlayRoot(
         else -> 0.dp
     }
 
-    val animatedMainWidth by animateDpAsState(targetValue = targetMainWidth, animationSpec = currentSpringDp, label = "mainWidth")
-    val animatedHeight by animateDpAsState(targetValue = targetHeight, animationSpec = currentSpringDp, label = "height")
-    val animatedCornerRadius by animateDpAsState(targetValue = targetCornerRadius, animationSpec = currentSpringDp, label = "cornerRadius")
-    val animatedCard2Height by animateDpAsState(targetValue = targetCard2Height, animationSpec = currentSpringDp, label = "card2Height")
-    val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = currentSpringFloat, label = "card2Alpha")
-    val animatedBubbleSize by animateDpAsState(targetValue = targetBubbleSize, animationSpec = currentSpringDp, label = "bubbleSize")
-    val animatedGap by animateDpAsState(targetValue = targetGap, animationSpec = currentSpringDp, label = "gap")
+    val animatedMainWidth by animateDpAsState(targetValue = targetMainWidth, animationSpec = currentAnimSpecDp, label = "mainWidth")
+    val animatedHeight by animateDpAsState(targetValue = targetHeight, animationSpec = currentAnimSpecDp, label = "height")
+    val animatedCornerRadius by animateDpAsState(targetValue = targetCornerRadius, animationSpec = currentAnimSpecDp, label = "cornerRadius")
+    val animatedCard2Height by animateDpAsState(targetValue = targetCard2Height, animationSpec = currentAnimSpecDp, label = "card2Height")
+    val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = currentAnimSpecFloat, label = "card2Alpha")
+    val animatedBubbleSize by animateDpAsState(targetValue = targetBubbleSize, animationSpec = currentAnimSpecDp, label = "bubbleSize")
+    val animatedGap by animateDpAsState(targetValue = targetGap, animationSpec = currentAnimSpecDp, label = "gap")
 
     // Clamped height: NEVER bounces less than base height when collapsing from expanded!
     val minPillHeight = settings.heightDp.dp
