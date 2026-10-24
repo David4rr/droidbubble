@@ -76,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -207,6 +208,14 @@ fun IslandOverlayRoot(
         else -> 0.dp
     }
 
+    val targetTopOffset = if (isExpanded) {
+        (settings.topOffsetDp + 46).dp // Sits way below initial position (comfortably below status bar) when expanded!
+    } else {
+        settings.topOffsetDp.dp // Docks right over the punch hole when minimised
+    }
+
+    val targetCardSpacing = if (isExpanded && showSecondaryCard) 10.dp else 0.dp
+
     val animatedMainWidth by animateDpAsState(targetValue = targetMainWidth, animationSpec = currentAnimSpecDp, label = "mainWidth")
     val animatedHeight by animateDpAsState(targetValue = targetHeight, animationSpec = currentAnimSpecDp, label = "height")
     val animatedCornerRadius by animateDpAsState(targetValue = targetCornerRadius, animationSpec = currentAnimSpecDp, label = "cornerRadius")
@@ -214,6 +223,8 @@ fun IslandOverlayRoot(
     val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = currentAnimSpecFloat, label = "card2Alpha")
     val animatedBubbleSize by animateDpAsState(targetValue = targetBubbleSize, animationSpec = currentAnimSpecDp, label = "bubbleSize")
     val animatedGap by animateDpAsState(targetValue = targetGap, animationSpec = currentAnimSpecDp, label = "gap")
+    val animatedTopOffset by animateDpAsState(targetValue = targetTopOffset, animationSpec = currentAnimSpecDp, label = "topOffset")
+    val animatedCardSpacing by animateDpAsState(targetValue = targetCardSpacing, animationSpec = currentAnimSpecDp, label = "cardSpacing")
 
     // Clamped height: NEVER bounces less than base height when collapsing from expanded!
     val minPillHeight = settings.heightDp.dp
@@ -245,13 +256,13 @@ fun IslandOverlayRoot(
             )
         }
 
-        // Main Island Container: Positioned at specified offsets
+        // Main Island Container: Positioned at animated top offset (smooth slide between compact punch hole and expanded position!)
         Box(
             modifier = Modifier
                 .offset {
                     IntOffset(
                         x = settings.horizontalOffsetDp.dp.roundToPx(),
-                        y = settings.topOffsetDp.dp.roundToPx()
+                        y = animatedTopOffset.roundToPx()
                     )
                 },
             contentAlignment = Alignment.TopCenter
@@ -259,7 +270,7 @@ fun IslandOverlayRoot(
             // Cards Stack (Card 1 + Card 2)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(animatedCardSpacing),
                 modifier = if (isExpanded) {
                     Modifier.pointerInput(Unit) {
                         detectVerticalDragGestures { _, dragAmount ->
@@ -276,6 +287,7 @@ fun IslandOverlayRoot(
                     modifier = Modifier
                         .width(animatedMainWidth)
                         .height(displayHeight)
+                        .clipToBounds()
                         .shadow(
                             elevation = if (isExpanded) 20.dp else (if (isOccupied) 8.dp else 0.dp),
                             shape = RoundedCornerShape(animatedCornerRadius)
@@ -302,9 +314,20 @@ fun IslandOverlayRoot(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    // Smooth crossfade and scaling between compact elements and expanded elements
-                    val compactAlpha = (1f - (expandProgress * 3.2f)).coerceIn(0f, 1f)
-                    val expandedAlpha = ((expandProgress - 0.28f) * 1.39f).coerceIn(0f, 1f)
+                    // Smooth crossfade:
+                    // On expand: expanded controls fade in after the card expands
+                    // On minimise: expanded controls fade out early without squishing, and compact elements fade in as pill docks
+                    val expandedAlpha = if (isExpanded) {
+                        ((expandProgress - 0.30f) / 0.70f).coerceIn(0f, 1f)
+                    } else {
+                        ((expandProgress - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                    }
+
+                    val compactAlpha = if (isExpanded) {
+                        (1f - (expandProgress * 3.0f)).coerceIn(0f, 1f)
+                    } else {
+                        (1f - (expandProgress * 1.8f)).coerceIn(0f, 1f)
+                    }
 
                     // 1. Compact Content: strictly clear 48dp center over punch-hole
                     if (compactAlpha > 0.01f && animatedMainWidth > 24.dp) {
@@ -351,11 +374,12 @@ fun IslandOverlayRoot(
                 }
 
                 // Card 2: Secondary Action Card (smoothly expands and collapses in dual mode!)
-                if (animatedCard2Height > 2.dp) {
+                if (animatedCard2Height > 1.dp) {
                     Box(
                         modifier = Modifier
                             .width(animatedMainWidth)
                             .height(animatedCard2Height)
+                            .clipToBounds()
                             .graphicsLayer {
                                 alpha = animatedCard2Alpha
                                 scaleX = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
