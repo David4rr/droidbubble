@@ -329,17 +329,28 @@ fun IslandOverlayRoot(
     )
 
     val chargingIslandWidth = (settings.widthDp + 20).dp.coerceAtLeast(140.dp)
-    // When minimised, height is STRICTLY fixed at settings.heightDp.dp.
-    val targetMainWidth = when {
+
+    // Minimised Island Pill: sits docked at settings.topOffsetDp.dp.
+    // When expanding, it animates from its compact width down to 0.dp.
+    // When minimising, it animates from 0.dp back to its compact width.
+    val targetCompactWidth = when {
+        !isOccupied -> 0.dp
+        isExpanded -> 0.dp // Shrinks horizontally into 0 width while card expands!
         isCharging -> chargingIslandWidth
-        isExpanded -> (340.dp * settings.expandedScale)
-        !isOccupied -> 0.dp // Disappears into the middle horizontally!
-        isDual -> (settings.widthDp * 0.74f).dp // Main pill centered around punch-hole in dual mode
+        isDual -> (settings.widthDp * 0.74f).dp
         else -> settings.widthDp.dp
     }
 
-    val targetHeight = when {
-        isCharging -> settings.heightDp.dp
+    // Expanded Cards: Card 1 (and Card 2 if dual mode).
+    // When expanded, Card 1 slides down to (settings.topOffsetDp + 52).dp, widening to 340.dp * scale.
+    // When minimising, Card 1 shrinks back to 0.dp width as it slides back up.
+    val targetCard1Width = if (isExpanded && !isCharging) {
+        (340.dp * settings.expandedScale)
+    } else {
+        0.dp
+    }
+
+    val targetCard1Height = when {
         isExpanded && primaryPriority == IslandPriority.SCREEN_RECORDING -> (115.dp * settings.expandedScale)
         isExpanded -> (195.dp * settings.expandedScale)
         else -> settings.heightDp.dp
@@ -375,8 +386,9 @@ fun IslandOverlayRoot(
 
     val targetCardSpacing = if (isExpanded && showSecondaryCard) 10.dp else 0.dp
 
-    val animatedMainWidth by animateDpAsState(targetValue = targetMainWidth, animationSpec = sizeAnimSpecDp, label = "mainWidth")
-    val animatedHeight by animateDpAsState(targetValue = targetHeight, animationSpec = sizeAnimSpecDp, label = "height")
+    val animatedCompactWidth by animateDpAsState(targetValue = targetCompactWidth, animationSpec = sizeAnimSpecDp, label = "compactWidth")
+    val animatedCard1Width by animateDpAsState(targetValue = targetCard1Width, animationSpec = sizeAnimSpecDp, label = "card1Width")
+    val animatedCard1Height by animateDpAsState(targetValue = targetCard1Height, animationSpec = sizeAnimSpecDp, label = "card1Height")
     val animatedCornerRadius by animateDpAsState(targetValue = targetCornerRadius, animationSpec = sizeAnimSpecDp, label = "cornerRadius")
     val animatedCard2Height by animateDpAsState(targetValue = targetCard2Height, animationSpec = sizeAnimSpecDp, label = "card2Height")
     val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = sizeAnimSpecFloat, label = "card2Alpha")
@@ -385,9 +397,7 @@ fun IslandOverlayRoot(
     val animatedTopOffset by animateDpAsState(targetValue = targetTopOffset, animationSpec = positionAnimSpecDp, label = "topOffset")
     val animatedCardSpacing by animateDpAsState(targetValue = targetCardSpacing, animationSpec = sizeAnimSpecDp, label = "cardSpacing")
 
-    // Clamped height: NEVER bounces less than base height when collapsing from expanded!
-    val minPillHeight = settings.heightDp.dp
-    val displayHeight = if (isExpanded) animatedHeight else animatedHeight.coerceAtLeast(minPillHeight)
+    val cardContainerAlpha = if (isExpanded) 1f else ((expandProgress - 0.05f) / 0.95f).coerceIn(0f, 1f)
 
     var card1OffsetX by remember { mutableFloatStateOf(0f) }
     var card2OffsetX by remember { mutableFloatStateOf(0f) }
@@ -450,51 +460,296 @@ fun IslandOverlayRoot(
             )
         }
 
-        // Main Island Container: Positioned at animated top offset (smooth slide between compact punch hole and expanded position!)
+        // Expanded Cards Container: Positioned at animated top offset (slides down to (settings.topOffsetDp + 52).dp)
+        if (expandProgress > 0.001f || isExpanded || animatedCard1Width > 1.dp) {
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            x = 0,
+                            y = animatedTopOffset.roundToPx()
+                        )
+                    },
+                contentAlignment = Alignment.TopCenter
+            ) {
+                // Cards Stack (Card 1 + Card 2)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(animatedCardSpacing),
+                    modifier = if (isExpanded) {
+                        Modifier.pointerInput(Unit) {
+                            detectVerticalDragGestures { _, dragAmount ->
+                                if (dragAmount < -15f) {
+                                    triggerHaptic()
+                                    IslandStateManager.collapse()
+                                }
+                            }
+                        }
+                    } else Modifier
+                ) {
+                    // Card 1: Primary Expanded Card
+                    if (animatedCard1Width > 1.dp) {
+                        Box(
+                            modifier = Modifier
+                                .offset { IntOffset(animatedCard1OffsetX.roundToInt(), 0) }
+                                .width(animatedCard1Width)
+                                .height(animatedCard1Height)
+                                .clipToBounds()
+                                .graphicsLayer {
+                                    alpha = cardContainerAlpha
+                                }
+                                .shadow(
+                                    elevation = if (isExpanded) 20.dp else 0.dp,
+                                    shape = RoundedCornerShape(animatedCornerRadius)
+                                )
+                                .clip(RoundedCornerShape(animatedCornerRadius))
+                                .background(if (animatedCard1Width > 2.dp) Color.Black else Color.Transparent)
+                                .then(
+                                    if (settings.showOutline && animatedCard1Width > 8.dp) {
+                                        Modifier.border(
+                                            width = settings.outlineThicknessDp.dp,
+                                            color = primaryOutlineColor,
+                                            shape = RoundedCornerShape(animatedCornerRadius)
+                                        )
+                                    } else Modifier
+                                )
+                                .then(
+                                    if (isExpanded) {
+                                        Modifier.pointerInput(primaryPriority) {
+                                            detectHorizontalDragGestures(
+                                                onDragEnd = {
+                                                    val threshold = 160f
+                                                    when (primaryPriority) {
+                                                        IslandPriority.MEDIA -> {
+                                                            if (abs(card1OffsetX) > threshold) {
+                                                                triggerHaptic()
+                                                                IslandStateManager.dismissMedia()
+                                                                if (activeCount <= 1) {
+                                                                    IslandStateManager.collapse()
+                                                                }
+                                                            }
+                                                        }
+                                                        IslandPriority.POP_NOTIFICATION,
+                                                        IslandPriority.PROGRESS -> {
+                                                            if (abs(card1OffsetX) > threshold) {
+                                                                triggerHaptic()
+                                                                val dismissed = IslandStateManager.dismissCurrentNotification()
+                                                                if (dismissed && activeCount <= 1) {
+                                                                    IslandStateManager.collapse()
+                                                                }
+                                                            }
+                                                        }
+                                                        else -> Unit
+                                                    }
+                                                    card1OffsetX = 0f
+                                                },
+                                                onDragCancel = {
+                                                    card1OffsetX = 0f
+                                                },
+                                                onHorizontalDrag = { _, dragAmount ->
+                                                    when (primaryPriority) {
+                                                        IslandPriority.SCREEN_RECORDING -> {
+                                                            card1OffsetX += dragAmount * 0.18f
+                                                        }
+                                                        else -> {
+                                                            card1OffsetX += dragAmount
+                                                        }
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    } else Modifier
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Subtle ambient gradient background ONLY in the expanded media player card
+                            if (isExpanded && primaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    mediaAccentColor.copy(alpha = 0.35f * expandProgress),
+                                                    mediaAccentColor.copy(alpha = 0.12f * expandProgress),
+                                                    Color.Transparent
+                                                )
+                                            )
+                                        )
+                                )
+                            }
+
+                            // Expanded Card 1 Content (e.g. Media Player or Primary Notification)
+                            val expandedAlpha = if (isExpanded) {
+                                ((expandProgress - 0.30f) / 0.70f).coerceIn(0f, 1f)
+                            } else {
+                                ((expandProgress - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                            }
+
+                            if (!isCharging && expandedAlpha > 0.01f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(20.dp)
+                                        .graphicsLayer {
+                                            alpha = expandedAlpha
+                                            scaleX = 0.94f + (0.06f * expandedAlpha)
+                                            scaleY = 0.94f + (0.06f * expandedAlpha)
+                                        }
+                                ) {
+                                    ExpandedCardContent(
+                                        priority = primaryPriority,
+                                        media = currentMedia,
+                                        notification = currentNotif,
+                                        recording = recording,
+                                        onCollapse = {
+                                            triggerHaptic()
+                                            IslandStateManager.collapse()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Card 2: Secondary Action Card (smoothly expands and collapses in dual mode!)
+                    if (animatedCard2Height > 1.dp) {
+                        Box(
+                            modifier = Modifier
+                                .offset { IntOffset(animatedCard2OffsetX.roundToInt(), 0) }
+                                .width(animatedCard1Width)
+                                .height(animatedCard2Height)
+                                .clipToBounds()
+                                .graphicsLayer {
+                                    alpha = animatedCard2Alpha
+                                    scaleX = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
+                                    scaleY = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
+                                }
+                                .shadow(
+                                    elevation = 16.dp,
+                                    shape = RoundedCornerShape(animatedCornerRadius)
+                                )
+                                .clip(RoundedCornerShape(animatedCornerRadius))
+                                .background(Color.Black)
+                                .then(
+                                    if (settings.showOutline) {
+                                        Modifier.border(
+                                            width = settings.outlineThicknessDp.dp,
+                                            color = secondaryOutlineColor,
+                                            shape = RoundedCornerShape(animatedCornerRadius)
+                                        )
+                                    } else Modifier
+                                )
+                                .then(
+                                    if (isExpanded && secondaryPriority != null) {
+                                        Modifier.pointerInput(secondaryPriority) {
+                                            detectHorizontalDragGestures(
+                                                onDragEnd = {
+                                                    val threshold = 160f
+                                                    when (secondaryPriority) {
+                                                        IslandPriority.MEDIA -> {
+                                                            if (abs(card2OffsetX) > threshold) {
+                                                                triggerHaptic()
+                                                                IslandStateManager.dismissMedia()
+                                                            }
+                                                        }
+                                                        IslandPriority.POP_NOTIFICATION,
+                                                        IslandPriority.PROGRESS -> {
+                                                            if (abs(card2OffsetX) > threshold) {
+                                                                triggerHaptic()
+                                                                IslandStateManager.dismissCurrentNotification()
+                                                            }
+                                                        }
+                                                        else -> Unit
+                                                    }
+                                                    card2OffsetX = 0f
+                                                },
+                                                onDragCancel = {
+                                                    card2OffsetX = 0f
+                                                },
+                                                onHorizontalDrag = { _, dragAmount ->
+                                                    when (secondaryPriority) {
+                                                        IslandPriority.PROGRESS,
+                                                        IslandPriority.SCREEN_RECORDING -> {
+                                                            card2OffsetX += dragAmount * 0.18f
+                                                        }
+                                                        else -> {
+                                                            card2OffsetX += dragAmount
+                                                        }
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    } else Modifier
+                                )
+                                .padding(20.dp)
+                        ) {
+                            // Subtle ambient gradient background for secondary card if it's the media player
+                            if (isExpanded && secondaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    mediaAccentColor.copy(alpha = 0.35f * animatedCard2Alpha),
+                                                    mediaAccentColor.copy(alpha = 0.12f * animatedCard2Alpha),
+                                                    Color.Transparent
+                                                )
+                                            )
+                                        )
+                                )
+                            }
+
+                            if (animatedCard2Alpha > 0.15f && secondaryPriority != null) {
+                                ExpandedCardContent(
+                                    priority = secondaryPriority,
+                                    media = currentMedia,
+                                    notification = currentNotif,
+                                    recording = recording,
+                                    onCollapse = {
+                                        triggerHaptic()
+                                        IslandStateManager.collapse()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Minimised Island Container: Positioned strictly at camera cutout level (settings.topOffsetDp.dp)
+        // Shrinks horizontally to 0 width while the card expands downwards, and blossoms from 0 width when minimising!
         Box(
             modifier = Modifier
                 .offset {
                     IntOffset(
                         x = 0,
-                        y = animatedTopOffset.roundToPx()
+                        y = settings.topOffsetDp.dp.roundToPx()
                     )
                 },
             contentAlignment = Alignment.TopCenter
         ) {
-            // Cards Stack (Card 1 + Card 2)
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(animatedCardSpacing),
-                modifier = if (isExpanded) {
-                    Modifier.pointerInput(Unit) {
-                        detectVerticalDragGestures { _, dragAmount ->
-                            if (dragAmount < -15f) {
-                                triggerHaptic()
-                                IslandStateManager.collapse()
-                            }
-                        }
-                    }
-                } else Modifier
-            ) {
-                // Card 1: Main Pill morphing smoothly into Primary Expanded Card
+            // Main Compact Pill (Shrinks to 0 width on expand, expands from 0 width on collapse)
+            if (animatedCompactWidth > 1.dp) {
                 Box(
                     modifier = Modifier
-                        .offset { IntOffset(animatedCard1OffsetX.roundToInt(), 0) }
-                        .width(animatedMainWidth)
-                        .height(displayHeight)
+                        .width(animatedCompactWidth)
+                        .height(settings.heightDp.dp)
                         .clipToBounds()
                         .shadow(
-                            elevation = if (isExpanded) 20.dp else (if (isOccupied) 8.dp else 0.dp),
-                            shape = RoundedCornerShape(animatedCornerRadius)
+                            elevation = if (isOccupied) 8.dp else 0.dp,
+                            shape = RoundedCornerShape(settings.cornerRadiusDp.dp)
                         )
-                        .clip(RoundedCornerShape(animatedCornerRadius))
-                        .background(if (animatedMainWidth > 2.dp) Color.Black else Color.Transparent)
+                        .clip(RoundedCornerShape(settings.cornerRadiusDp.dp))
+                        .background(if (animatedCompactWidth > 2.dp) Color.Black else Color.Transparent)
                         .then(
-                            if (settings.showOutline && animatedMainWidth > 8.dp) {
+                            if (settings.showOutline && animatedCompactWidth > 8.dp) {
                                 Modifier.border(
                                     width = settings.outlineThicknessDp.dp,
                                     color = primaryOutlineColor,
-                                    shape = RoundedCornerShape(animatedCornerRadius)
+                                    shape = RoundedCornerShape(settings.cornerRadiusDp.dp)
                                 )
                             } else Modifier
                         )
@@ -506,82 +761,9 @@ fun IslandOverlayRoot(
                                 triggerHaptic()
                                 IslandStateManager.expand()
                             }
-                        }
-                        .then(
-                            if (isExpanded) {
-                                Modifier.pointerInput(primaryPriority) {
-                                    detectHorizontalDragGestures(
-                                        onDragEnd = {
-                                            val threshold = 160f
-                                            when (primaryPriority) {
-                                                IslandPriority.MEDIA -> {
-                                                    if (abs(card1OffsetX) > threshold) {
-                                                        triggerHaptic()
-                                                        IslandStateManager.dismissMedia()
-                                                        if (activeCount <= 1) {
-                                                            IslandStateManager.collapse()
-                                                        }
-                                                    }
-                                                }
-                                                IslandPriority.POP_NOTIFICATION,
-                                                IslandPriority.PROGRESS -> {
-                                                    if (abs(card1OffsetX) > threshold) {
-                                                        triggerHaptic()
-                                                        val dismissed = IslandStateManager.dismissCurrentNotification()
-                                                        if (dismissed && activeCount <= 1) {
-                                                            IslandStateManager.collapse()
-                                                        }
-                                                    }
-                                                }
-                                                else -> Unit
-                                            }
-                                            card1OffsetX = 0f
-                                        },
-                                        onDragCancel = {
-                                            card1OffsetX = 0f
-                                        },
-                                        onHorizontalDrag = { _, dragAmount ->
-                                            when (primaryPriority) {
-                                                IslandPriority.SCREEN_RECORDING -> {
-                                                    card1OffsetX += dragAmount * 0.18f
-                                                }
-                                                else -> {
-                                                    card1OffsetX += dragAmount
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
-                            } else Modifier
-                        ),
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    // Subtle ambient gradient background ONLY in the expanded media player card
-                    if (isExpanded && primaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        colors = listOf(
-                                            mediaAccentColor.copy(alpha = 0.35f * expandProgress),
-                                            mediaAccentColor.copy(alpha = 0.12f * expandProgress),
-                                            Color.Transparent
-                                        )
-                                    )
-                                )
-                        )
-                    }
-
-                    // Smooth crossfade:
-                    // On expand: expanded controls fade in after the card expands
-                    // On minimise: expanded controls fade out early without squishing, and compact elements fade in as pill docks
-                    val expandedAlpha = if (isExpanded) {
-                        ((expandProgress - 0.30f) / 0.70f).coerceIn(0f, 1f)
-                    } else {
-                        ((expandProgress - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                    }
-
                     val compactAlpha = if (isExpanded) {
                         (1f - (expandProgress * 3.0f)).coerceIn(0f, 1f)
                     } else {
@@ -589,9 +771,7 @@ fun IslandOverlayRoot(
                     }
 
                     // Background darker green progress bar for charging status:
-                    // Glides from left to relative battery percentage, then fades away when island collapses
                     if (isCharging || chargingContentAlpha > 0.01f) {
-                        // Subtle ultra-dark green base track
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -599,7 +779,6 @@ fun IslandOverlayRoot(
                                 .background(Color(0xFF04190B))
                         )
 
-                        // Filled darker green progress bar
                         Box(
                             modifier = Modifier
                                 .fillMaxHeight()
@@ -669,7 +848,7 @@ fun IslandOverlayRoot(
                                 )
                             }
                         }
-                    } else if (compactAlpha > 0.01f && animatedMainWidth > 24.dp) {
+                    } else if (compactAlpha > 0.01f && animatedCompactWidth > 24.dp) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -682,135 +861,6 @@ fun IslandOverlayRoot(
                                 notification = currentNotif,
                                 recording = recording,
                                 isCompactDual = isDual
-                            )
-                        }
-                    }
-
-                    // 2. Expanded Card 1 Content (e.g. Media Player or Primary Notification)
-                    if (!isCharging && expandedAlpha > 0.01f) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(20.dp)
-                                .graphicsLayer {
-                                    alpha = expandedAlpha
-                                    scaleX = 0.94f + (0.06f * expandedAlpha)
-                                    scaleY = 0.94f + (0.06f * expandedAlpha)
-                                }
-                        ) {
-                            ExpandedCardContent(
-                                priority = primaryPriority,
-                                media = currentMedia,
-                                notification = currentNotif,
-                                recording = recording,
-                                onCollapse = {
-                                    triggerHaptic()
-                                    IslandStateManager.collapse()
-                                }
-                            )
-                        }
-                    }
-                }
-
-                // Card 2: Secondary Action Card (smoothly expands and collapses in dual mode!)
-                if (animatedCard2Height > 1.dp) {
-                    Box(
-                        modifier = Modifier
-                            .offset { IntOffset(animatedCard2OffsetX.roundToInt(), 0) }
-                            .width(animatedMainWidth)
-                            .height(animatedCard2Height)
-                            .clipToBounds()
-                            .graphicsLayer {
-                                alpha = animatedCard2Alpha
-                                scaleX = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
-                                scaleY = 0.92f + (0.08f * animatedCard2Alpha.coerceIn(0f, 1f))
-                            }
-                            .shadow(
-                                elevation = 16.dp,
-                                shape = RoundedCornerShape(animatedCornerRadius)
-                            )
-                            .clip(RoundedCornerShape(animatedCornerRadius))
-                            .background(Color.Black)
-                            .then(
-                                if (settings.showOutline) {
-                                    Modifier.border(
-                                        width = settings.outlineThicknessDp.dp,
-                                        color = secondaryOutlineColor,
-                                        shape = RoundedCornerShape(animatedCornerRadius)
-                                    )
-                                } else Modifier
-                            )
-                            .then(
-                                if (isExpanded && secondaryPriority != null) {
-                                    Modifier.pointerInput(secondaryPriority) {
-                                        detectHorizontalDragGestures(
-                                            onDragEnd = {
-                                                val threshold = 160f
-                                                when (secondaryPriority) {
-                                                    IslandPriority.MEDIA -> {
-                                                        if (abs(card2OffsetX) > threshold) {
-                                                            triggerHaptic()
-                                                            IslandStateManager.dismissMedia()
-                                                        }
-                                                    }
-                                                    IslandPriority.POP_NOTIFICATION,
-                                                    IslandPriority.PROGRESS -> {
-                                                        if (abs(card2OffsetX) > threshold) {
-                                                            triggerHaptic()
-                                                            IslandStateManager.dismissCurrentNotification()
-                                                        }
-                                                    }
-                                                    else -> Unit
-                                                }
-                                                card2OffsetX = 0f
-                                            },
-                                            onDragCancel = {
-                                                card2OffsetX = 0f
-                                            },
-                                            onHorizontalDrag = { _, dragAmount ->
-                                                when (secondaryPriority) {
-                                                    IslandPriority.PROGRESS,
-                                                    IslandPriority.SCREEN_RECORDING -> {
-                                                        card2OffsetX += dragAmount * 0.18f
-                                                    }
-                                                    else -> {
-                                                        card2OffsetX += dragAmount
-                                                    }
-                                                }
-                                            }
-                                        )
-                                    }
-                                } else Modifier
-                            )
-                            .padding(20.dp)
-                    ) {
-                        // Subtle ambient gradient background for secondary card if it's the media player
-                        if (isExpanded && secondaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            colors = listOf(
-                                                mediaAccentColor.copy(alpha = 0.35f * animatedCard2Alpha),
-                                                mediaAccentColor.copy(alpha = 0.12f * animatedCard2Alpha),
-                                                Color.Transparent
-                                            )
-                                        )
-                                    )
-                            )
-                        }
-
-                        if (animatedCard2Alpha > 0.15f && secondaryPriority != null) {
-                            ExpandedCardContent(
-                                priority = secondaryPriority,
-                                media = currentMedia,
-                                notification = currentNotif,
-                                recording = recording,
-                                onCollapse = {
-                                    triggerHaptic()
-                                    IslandStateManager.collapse()
-                                }
                             )
                         }
                     }
@@ -876,30 +926,30 @@ fun IslandOverlayRoot(
                 animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
                 label = "parenthesisAlpha"
             )
-            if (parenthesisAlphaAnim > 0.01f && animatedMainWidth > 20.dp) {
-                val parenthesisHeight = (displayHeight * 0.50f).coerceIn(15.dp, 20.dp)
+            if (parenthesisAlphaAnim > 0.01f && animatedCompactWidth > 20.dp) {
+                val parenthesisHeight = (settings.heightDp.dp * 0.50f).coerceIn(15.dp, 20.dp)
                 val parenthesisWidth = 4.5.dp
                 val parenthesisGap = 3.5.dp
                 val parenthesisStroke = 1.8.dp
                 val density = LocalDensity.current
 
-                val pYPx = with(density) { ((displayHeight - parenthesisHeight) / 2f).roundToPx() }
+                val pYPx = with(density) { ((settings.heightDp.dp - parenthesisHeight) / 2f).roundToPx() }
                 val tipOffsetFromCenter = (parenthesisWidth - parenthesisStroke) / 2f
 
                 // Left parenthesis `(`: tips facing right are at centerX + tipOffsetFromCenter.
                 // We want tips to sit exactly at islandLeft - parenthesisGap.
-                val islandLeftDp = -animatedMainWidth / 2f
+                val islandLeftDp = -animatedCompactWidth / 2f
                 val leftCenterXPx = with(density) {
                     (islandLeftDp - parenthesisGap - tipOffsetFromCenter).roundToPx()
-                } + animatedCard1OffsetX.roundToInt()
+                }
 
                 // Right parenthesis `)`: tips facing left are at centerX - tipOffsetFromCenter.
                 // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap.
                 val rightContentEdgeDp = if (!isCharging && isDual && animatedBubbleSize > 2.dp) {
                     val compactMainHalf = (settings.widthDp * 0.74f).dp / 2f
-                    (compactMainHalf + animatedGap + animatedBubbleSize).coerceAtLeast(animatedMainWidth / 2f)
+                    (compactMainHalf + animatedGap + animatedBubbleSize).coerceAtLeast(animatedCompactWidth / 2f)
                 } else {
-                    animatedMainWidth / 2f
+                    animatedCompactWidth / 2f
                 }
                 val rightCenterXPx = with(density) {
                     (rightContentEdgeDp + parenthesisGap + tipOffsetFromCenter).roundToPx()
@@ -938,12 +988,12 @@ fun IslandOverlayRoot(
                     val mainHalf = (settings.widthDp * 0.74f).dp / 2f
                     (mainHalf + animatedGap + animatedBubbleSize + 24.dp) * 2f
                 } else {
-                    animatedMainWidth + 36.dp
+                    animatedCompactWidth + 36.dp
                 }
                 Box(
                     modifier = Modifier
                         .width(compactHitWidth)
-                        .height(displayHeight + 36.dp)
+                        .height(settings.heightDp.dp + 36.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
