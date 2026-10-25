@@ -96,7 +96,7 @@ object IslandStateManager {
         get() = _activeCharging.value != null
 
     val isOccupied: Boolean
-        get() = isRecordingActive || isNotificationActive || isMediaActive || isChargingActive
+        get() = isRecordingActive || isNotificationActive || isMediaActive || isProgressActive || isChargingActive
 
     // Live priority determination
     val currentPriority: IslandPriority
@@ -122,6 +122,11 @@ object IslandStateManager {
             delay(3000)
             _activeCharging.value = null
         }
+    }
+
+    fun updateChargingWattage(wattage: Double?) {
+        val current = _activeCharging.value ?: return
+        _activeCharging.value = current.copy(wattage = wattage)
     }
 
     fun updateMedia(media: MediaInfo?) {

@@ -27,11 +27,15 @@ import com.droidbubble.app.model.IslandSettings
 import com.droidbubble.app.model.MediaInfo
 import com.droidbubble.app.model.NotificationAction
 import com.droidbubble.app.model.NotificationInfo
+import com.droidbubble.app.model.ScreenRecordingState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class NotificationReceiverService : NotificationListenerService() {
@@ -172,6 +176,7 @@ class NotificationReceiverService : NotificationListenerService() {
         if (instance === this) {
             instance = null
         }
+        recordingTimerJob?.cancel()
         serviceScope.cancel()
     }
 
@@ -335,10 +340,170 @@ class NotificationReceiverService : NotificationListenerService() {
         )
     }
 
+    private var systemRecordingKey: String? = null
+    private var recordingTimerJob: Job? = null
+    private var recordingStartTimeMs: Long = 0L
+    private var recordingPausedAtMs: Long = 0L
+    private var activeStopAction: Notification.Action? = null
+    private var activePauseAction: Notification.Action? = null
+    private var activeResumeAction: Notification.Action? = null
+
+    private fun isScreenRecordingSavedNotification(sbn: StatusBarNotification, notification: Notification): Boolean {
+        val extras = notification.extras
+        val title = (extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "").lowercase()
+        val text = (extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "").lowercase()
+        val subText = (extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: "").lowercase()
+        val combined = "$title $text $subText"
+
+        return combined.contains("saved") ||
+                combined.contains("finished") ||
+                combined.contains("completed") ||
+                combined.contains("tap to view") ||
+                combined.contains("tap to share") ||
+                combined.contains("share") ||
+                combined.contains("deleted") ||
+                combined.contains("ready")
+    }
+
+    private fun isScreenRecordingNotification(sbn: StatusBarNotification, notification: Notification): Boolean {
+        // 1. If it's a "saved" / completed notification, it's NOT an active screen recording!
+        if (isScreenRecordingSavedNotification(sbn, notification)) {
+            return false
+        }
+
+        // 2. Active screen recording MUST be ongoing (cannot be dismissed while recording)
+        val isOngoing = sbn.isOngoing ||
+                (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 ||
+                (notification.flags and Notification.FLAG_NO_CLEAR) != 0
+        if (!isOngoing) {
+            return false
+        }
+
+        val pkg = sbn.packageName.lowercase()
+        val channelId = notification.channelId?.lowercase() ?: ""
+        val extras = notification.extras
+        val title = (extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "").lowercase()
+        val text = (extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "").lowercase()
+        val subText = (extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: "").lowercase()
+
+        val isRecordingText = title.contains("screen record") ||
+                title.contains("recording screen") ||
+                title.contains("screen recording") ||
+                title.contains("screen recorder") ||
+                title.contains("recording display") ||
+                text.contains("screen record") ||
+                text.contains("recording screen") ||
+                text.contains("screen recording") ||
+                subText.contains("recording screen")
+
+        val isRecordingPkg = pkg.contains("screenrecorder") ||
+                pkg.contains("screen_recorder") ||
+                pkg.contains("screenrecord") ||
+                pkg.contains("hecorat.screenrecorder") ||
+                pkg == "com.android.systemui" ||
+                pkg == "com.google.android.systemui"
+
+        val isRecordingChannel = channelId.contains("screen_record") ||
+                channelId.contains("screenrecord") ||
+                channelId.contains("screen_capture")
+
+        return (isRecordingChannel && (isRecordingText || isRecordingPkg)) ||
+                (isRecordingPkg && isRecordingText) ||
+                title.contains("recording screen") ||
+                title.contains("screen recording") ||
+                title.contains("screen recorder") ||
+                text.contains("recording screen") ||
+                text.contains("screen recording") ||
+                text.contains("screen recorder")
+    }
+
+    private fun handleScreenRecordingNotification(sbn: StatusBarNotification) {
+        systemRecordingKey = sbn.key
+        val notification = sbn.notification ?: return
+
+        // Extract actions: Stop, Pause, Resume
+        val actions = notification.actions
+        actions?.forEach { action ->
+            val aTitle = (action.title?.toString() ?: "").lowercase()
+            if (aTitle.contains("stop") || aTitle.contains("end") || aTitle.contains("finish")) {
+                activeStopAction = action
+            } else if (aTitle.contains("pause")) {
+                activePauseAction = action
+            } else if (aTitle.contains("resume")) {
+                activeResumeAction = action
+            }
+        }
+        if (activeStopAction == null && !actions.isNullOrEmpty() && actions.size == 1) {
+            activeStopAction = actions[0]
+        }
+
+        // Connect functions so island buttons trigger real recording actions
+        IslandStateManager.onStopRecording = {
+            try {
+                activeStopAction?.actionIntent?.send()
+            } catch (e: Exception) {
+                Log.e("NotificationReceiver", "Error sending stop intent", e)
+            }
+            recordingTimerJob?.cancel()
+            recordingTimerJob = null
+            systemRecordingKey = null
+            activeStopAction = null
+            activePauseAction = null
+            activeResumeAction = null
+            IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
+        }
+
+        IslandStateManager.onTogglePauseRecording = {
+            val currentState = IslandStateManager.screenRecordingState.value
+            if (currentState.isPaused) {
+                try {
+                    activeResumeAction?.actionIntent?.send() ?: activePauseAction?.actionIntent?.send()
+                } catch (e: Exception) {
+                    Log.e("NotificationReceiver", "Error sending resume intent", e)
+                }
+                if (recordingPausedAtMs > 0) {
+                    recordingStartTimeMs += (System.currentTimeMillis() - recordingPausedAtMs)
+                    recordingPausedAtMs = 0L
+                }
+                IslandStateManager.updateRecordingState(currentState.copy(isPaused = false))
+            } else {
+                try {
+                    activePauseAction?.actionIntent?.send()
+                } catch (e: Exception) {
+                    Log.e("NotificationReceiver", "Error sending pause intent", e)
+                }
+                recordingPausedAtMs = System.currentTimeMillis()
+                IslandStateManager.updateRecordingState(currentState.copy(isPaused = true))
+            }
+        }
+
+        if (recordingTimerJob == null || !IslandStateManager.screenRecordingState.value.isRecording) {
+            val postTime = sbn.postTime
+            recordingStartTimeMs = if (postTime > 0 && postTime <= System.currentTimeMillis()) postTime else System.currentTimeMillis()
+            recordingPausedAtMs = 0L
+            val initialSeconds = ((System.currentTimeMillis() - recordingStartTimeMs) / 1000).coerceAtLeast(0L)
+            IslandStateManager.updateRecordingState(
+                ScreenRecordingState(isRecording = true, durationSeconds = initialSeconds, isPaused = false)
+            )
+            recordingTimerJob = serviceScope.launch {
+                while (isActive) {
+                    delay(1000)
+                    val currentState = IslandStateManager.screenRecordingState.value
+                    if (!currentState.isPaused) {
+                        val elapsed = ((System.currentTimeMillis() - recordingStartTimeMs) / 1000).coerceAtLeast(0L)
+                        IslandStateManager.updateRecordingState(
+                            currentState.copy(isRecording = true, durationSeconds = elapsed)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
-        if (!currentSettings.showNotifications && !currentSettings.showLiveProgress) return
+        if (!currentSettings.showNotifications && !currentSettings.showLiveProgress && !currentSettings.showScreenRecording) return
 
         val packageName = sbn.packageName
         if (packageName == this.packageName) return // Ignore self
@@ -347,12 +512,36 @@ class NotificationReceiverService : NotificationListenerService() {
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
 
-        // Skip media notifications (Media controls are handled exclusively via MediaSessionManager with slider & controls)
+        // 0. If a "screen recording saved" notification arrives, immediately shut down recording state
+        if (isScreenRecordingSavedNotification(sbn, notification)) {
+            val pkg = sbn.packageName.lowercase()
+            val channelId = notification.channelId?.lowercase() ?: ""
+            if (pkg.contains("screenrecord") || pkg == "com.android.systemui" || pkg == "com.google.android.systemui" || channelId.contains("screen_record") || systemRecordingKey == sbn.key) {
+                systemRecordingKey = null
+                recordingTimerJob?.cancel()
+                recordingTimerJob = null
+                activeStopAction = null
+                activePauseAction = null
+                activeResumeAction = null
+                IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
+                return
+            }
+        }
+
+        // 1. Detect system screen recording notifications
+        if (isScreenRecordingNotification(sbn, notification)) {
+            if (currentSettings.showScreenRecording) {
+                handleScreenRecordingNotification(sbn)
+            }
+            return
+        }
+
+        // 2. Skip media notifications (Media controls are handled exclusively via MediaSessionManager with slider & controls)
         if (isMediaNotification(sbn, notification)) {
             return
         }
 
-        // Extract live progress tracking (e.g. Google Play Store, downloads, transfers)
+        // 3. Extract live progress tracking (e.g. Google Play Store, downloads, transfers)
         val progress = extras.getInt(Notification.EXTRA_PROGRESS, -1)
         val maxProgress = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
         val isIndeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
@@ -426,6 +615,15 @@ class NotificationReceiverService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
         if (sbn == null) return
+        if (systemRecordingKey == sbn.key || (sbn.notification != null && isScreenRecordingNotification(sbn, sbn.notification))) {
+            systemRecordingKey = null
+            recordingTimerJob?.cancel()
+            recordingTimerJob = null
+            activeStopAction = null
+            activePauseAction = null
+            activeResumeAction = null
+            IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
+        }
         if (IslandStateManager.activeNotification.value?.key == sbn.key) {
             IslandStateManager.updateNotification(null)
         }

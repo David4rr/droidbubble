@@ -52,6 +52,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -180,9 +181,9 @@ class IslandOverlayService : Service() {
                 "com.droidbubble.app.ACTION_SIMULATE_CHARGING" -> {
                     val pct = intent.getIntExtra("percentage", 85)
                     val wattage = if (intent.hasExtra("wattage")) {
-                        intent.getDoubleExtra("wattage", 33.0)
+                        intent.getDoubleExtra("wattage", 0.0).takeIf { it > 0 }
                     } else {
-                        BatteryUtils.getChargingWattage(this@IslandOverlayService) ?: 33.0
+                        BatteryUtils.getChargingWattage(this@IslandOverlayService)
                     }
                     IslandStateManager.triggerChargingEvent(pct, wattage)
                 }
@@ -205,6 +206,17 @@ class IslandOverlayService : Service() {
                 }
                 val wattage = BatteryUtils.getChargingWattage(ctx, batteryIntent)
                 IslandStateManager.triggerChargingEvent(pct, wattage)
+
+                // Fast charging (USB-PD / QuickCharge) often takes ~1-1.5s to negotiate higher wattage
+                serviceScope.launch {
+                    delay(1200)
+                    if (IslandStateManager.isChargingActive) {
+                        val updated = BatteryUtils.getChargingWattage(this@IslandOverlayService)
+                        if (updated != null && updated != wattage) {
+                            IslandStateManager.updateChargingWattage(updated)
+                        }
+                    }
+                }
             }
         }
     }

@@ -83,6 +83,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -109,6 +110,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -117,6 +119,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -188,10 +191,10 @@ fun IslandOverlayRoot(
     val currentNotif = notification
     val mediaArt = currentMedia?.albumArt ?: currentMedia?.appIcon
     val mediaAccentColor = remember(mediaArt) { extractMediaAccentColor(mediaArt) }
-    val isRecording = recording.isRecording
-    val isProgress = currentNotif?.hasProgress == true
-    val isNotification = currentNotif != null && !isProgress
-    val isMedia = currentMedia != null && (currentMedia.isPlaying || currentMedia.title.isNotBlank())
+    val isRecording = recording.isRecording && settings.showScreenRecording
+    val isProgress = currentNotif?.hasProgress == true && settings.showLiveProgress
+    val isNotification = currentNotif != null && !isProgress && settings.showNotifications
+    val isMedia = currentMedia != null && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
     val isCharging = charging != null
 
     val isOccupied = isRecording || isNotification || isMedia || isProgress || isCharging
@@ -220,6 +223,31 @@ fun IslandOverlayRoot(
         isDual && isProgress && isRecording -> IslandPriority.SCREEN_RECORDING
         isDual && isRecording && isNotification -> IslandPriority.POP_NOTIFICATION
         else -> null
+    }
+
+    // Dynamic non-customizable outline colors (around 15% opacity):
+    val redRecordingOutline = Color(0xFFFF3B30).copy(alpha = 0.50f)
+    val defaultTaskOutline = Color.White.copy(alpha = 0.15f)
+    val mediaOutline = if (mediaAccentColor != Color.Transparent) {
+        mediaAccentColor.copy(alpha = 0.15f)
+    } else {
+        defaultTaskOutline
+    }
+
+    // Card 1 (Main Island):
+    val primaryOutlineColor = when {
+        isCharging -> Color(0xFF30D158).copy(alpha = 0.30f)
+        primaryPriority == IslandPriority.SCREEN_RECORDING -> redRecordingOutline
+        primaryPriority == IslandPriority.MEDIA -> mediaOutline
+        else -> defaultTaskOutline
+    }
+
+    // Card 2 / Auxiliary Bubble (Secondary Island):
+    // Secondary islands have the color of their respective task (15% opacity white usually, or red for recording) instead of the media color
+    val secondaryOutlineColor = when {
+        secondaryPriority == IslandPriority.SCREEN_RECORDING -> redRecordingOutline
+        secondaryPriority == IslandPriority.MEDIA -> mediaOutline
+        else -> defaultTaskOutline
     }
 
     // Animation Specs:
@@ -312,6 +340,7 @@ fun IslandOverlayRoot(
 
     val targetHeight = when {
         isCharging -> settings.heightDp.dp
+        isExpanded && primaryPriority == IslandPriority.SCREEN_RECORDING -> (115.dp * settings.expandedScale)
         isExpanded -> (195.dp * settings.expandedScale)
         else -> settings.heightDp.dp
     }
@@ -322,7 +351,10 @@ fun IslandOverlayRoot(
     }
 
     val showSecondaryCard = !isCharging && activeCount >= 2 && secondaryPriority != null
-    val targetCard2Height = if (isExpanded && showSecondaryCard) (180.dp * settings.expandedScale) else 0.dp
+    val targetCard2Height = if (isExpanded && showSecondaryCard) {
+        val baseH = if (secondaryPriority == IslandPriority.SCREEN_RECORDING) 115.dp else 180.dp
+        baseH * settings.expandedScale
+    } else 0.dp
     val targetCard2Alpha = if (isExpanded && showSecondaryCard) 1f else 0f
 
     val targetBubbleSize = when {
@@ -461,7 +493,7 @@ fun IslandOverlayRoot(
                             if (settings.showOutline && animatedMainWidth > 8.dp) {
                                 Modifier.border(
                                     width = settings.outlineThicknessDp.dp,
-                                    color = Color(settings.outlineColorArgb),
+                                    color = primaryOutlineColor,
                                     shape = RoundedCornerShape(animatedCornerRadius)
                                 )
                             } else Modifier
@@ -491,7 +523,8 @@ fun IslandOverlayRoot(
                                                         }
                                                     }
                                                 }
-                                                IslandPriority.POP_NOTIFICATION -> {
+                                                IslandPriority.POP_NOTIFICATION,
+                                                IslandPriority.PROGRESS -> {
                                                     if (abs(card1OffsetX) > threshold) {
                                                         triggerHaptic()
                                                         val dismissed = IslandStateManager.dismissCurrentNotification()
@@ -499,9 +532,6 @@ fun IslandOverlayRoot(
                                                             IslandStateManager.collapse()
                                                         }
                                                     }
-                                                }
-                                                IslandPriority.PROGRESS -> {
-                                                    // Progress cannot be dismissed
                                                 }
                                                 else -> Unit
                                             }
@@ -512,7 +542,6 @@ fun IslandOverlayRoot(
                                         },
                                         onHorizontalDrag = { _, dragAmount ->
                                             when (primaryPriority) {
-                                                IslandPriority.PROGRESS,
                                                 IslandPriority.SCREEN_RECORDING -> {
                                                     card1OffsetX += dragAmount * 0.18f
                                                 }
@@ -592,7 +621,11 @@ fun IslandOverlayRoot(
                     if (isCharging || chargingContentAlpha > 0.01f) {
                         val wattage = charging?.wattage
                         val chargingLabel = if (wattage != null && wattage >= 1.0) {
-                            "${wattage.roundToInt()}W"
+                            if (wattage >= 10.0 || (wattage % 1.0) < 0.05 || (wattage % 1.0) > 0.95) {
+                                "${wattage.roundToInt()}W"
+                            } else {
+                                String.format(Locale.US, "%.1fW", wattage)
+                            }
                         } else {
                             "Charging"
                         }
@@ -702,7 +735,7 @@ fun IslandOverlayRoot(
                                 if (settings.showOutline) {
                                     Modifier.border(
                                         width = settings.outlineThicknessDp.dp,
-                                        color = Color(settings.outlineColorArgb),
+                                        color = secondaryOutlineColor,
                                         shape = RoundedCornerShape(animatedCornerRadius)
                                     )
                                 } else Modifier
@@ -720,14 +753,12 @@ fun IslandOverlayRoot(
                                                             IslandStateManager.dismissMedia()
                                                         }
                                                     }
-                                                    IslandPriority.POP_NOTIFICATION -> {
+                                                    IslandPriority.POP_NOTIFICATION,
+                                                    IslandPriority.PROGRESS -> {
                                                         if (abs(card2OffsetX) > threshold) {
                                                             triggerHaptic()
                                                             IslandStateManager.dismissCurrentNotification()
                                                         }
-                                                    }
-                                                    IslandPriority.PROGRESS -> {
-                                                        // Progress cannot be dismissed
                                                     }
                                                     else -> Unit
                                                 }
@@ -812,7 +843,7 @@ fun IslandOverlayRoot(
                             if (settings.showOutline && animatedBubbleSize > 8.dp) {
                                 Modifier.border(
                                     width = settings.outlineThicknessDp.dp,
-                                    color = Color(settings.outlineColorArgb),
+                                    color = secondaryOutlineColor,
                                     shape = CircleShape
                                 )
                             } else Modifier
@@ -1070,18 +1101,7 @@ fun CompactContent(
         ) {
             when (priority) {
                 IslandPriority.SCREEN_RECORDING -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        PulsingRecordingDot()
-                        if (!isCompactDual) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "REC",
-                                color = Color(0xFFE5E5EA),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                    PulsingRecordingDot()
                 }
 
                 IslandPriority.POP_NOTIFICATION -> {
@@ -1159,9 +1179,9 @@ fun CompactContent(
             }
         }
 
-        // Camera punch-hole deadzone: STRICTLY 48dp EMPTY SPACE IN THE MIDDLE!
+        // Camera punch-hole deadzone: STRICTLY 36dp EMPTY SPACE IN THE MIDDLE!
         // No UI elements will EVER enter or overlap the camera cutout area
-        Spacer(modifier = Modifier.width(48.dp))
+        Spacer(modifier = Modifier.width(36.dp))
 
         // Trailing content: Pinned strictly to the right of the camera punch hole
         Box(
@@ -1194,38 +1214,34 @@ fun CompactContent(
                 IslandPriority.PROGRESS -> {
                     val pct = notification?.progressFraction ?: 0f
                     val isIndet = notification?.isIndeterminate == true
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        if (isIndet) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(15.dp),
-                                strokeWidth = 2.dp,
-                                color = Color(0xFFE5E5EA),
-                                trackColor = Color(0xFF2C2C2E)
-                            )
-                        } else {
-                            Text(
-                                text = "${(pct * 100).roundToInt()}%",
-                                color = Color(0xFFE5E5EA),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            CircularProgressIndicator(
-                                progress = { pct },
-                                modifier = Modifier.size(15.dp),
-                                strokeWidth = 2.dp,
-                                color = Color(0xFFE5E5EA),
-                                trackColor = Color(0xFF2C2C2E)
-                            )
-                        }
+                    if (isIndet) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFFE5E5EA),
+                            trackColor = Color(0xFF2C2C2E)
+                        )
+                    } else {
+                        Text(
+                            text = "${(pct * 100).roundToInt()}%",
+                            color = Color(0xFFE5E5EA),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
 
                 IslandPriority.MEDIA -> {
-                    EqualizerVisualizer(isPlaying = media?.isPlaying == true)
+                    val displayArt = media?.albumArt ?: media?.appIcon
+                    val compactAccent = remember(displayArt) { extractMediaAccentColor(displayArt) }
+                    val compactEqTint = if (compactAccent != Color.Transparent) {
+                        lerp(Color(0xFFE5E5EA), compactAccent, 0.50f)
+                    } else {
+                        Color(0xFFE5E5EA)
+                    }
+                    EqualizerVisualizer(isPlaying = media?.isPlaying == true, barColor = compactEqTint)
                 }
 
                 IslandPriority.IDLE -> Unit
@@ -1264,6 +1280,7 @@ fun ExpandedCardContent(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
     val context = LocalContext.current
@@ -1274,6 +1291,49 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
     val duration = (media?.durationMs ?: 0L).coerceAtLeast(1L)
 
     val displayArt = media?.albumArt ?: media?.appIcon
+    val mediaAccentColor = remember(displayArt) { extractMediaAccentColor(displayArt) }
+
+    val controlsTint = if (mediaAccentColor != Color.Transparent) {
+        lerp(Color(0xFFE5E5EA), mediaAccentColor, 0.40f)
+    } else {
+        Color(0xFFE5E5EA)
+    }
+
+    val playButtonBg = if (mediaAccentColor != Color.Transparent) {
+        lerp(Color.White, mediaAccentColor, 0.28f)
+    } else {
+        Color.White
+    }
+
+    val playButtonIconTint = if (mediaAccentColor != Color.Transparent) {
+        lerp(Color.Black, mediaAccentColor, 0.15f)
+    } else {
+        Color.Black
+    }
+
+    val eqTint = if (mediaAccentColor != Color.Transparent) {
+        lerp(Color(0xFFE5E5EA), mediaAccentColor, 0.50f)
+    } else {
+        Color(0xFFE5E5EA)
+    }
+
+    val sliderActiveTint = if (mediaAccentColor != Color.Transparent) {
+        lerp(Color(0xFFE5E5EA), mediaAccentColor, 0.55f)
+    } else {
+        Color(0xFFE5E5EA)
+    }
+
+    val sliderInactiveTint = if (mediaAccentColor != Color.Transparent) {
+        lerp(Color(0xFF2C2C2E), mediaAccentColor, 0.22f)
+    } else {
+        Color(0xFF2C2C2E)
+    }
+
+    val durationTextTint = if (mediaAccentColor != Color.Transparent) {
+        lerp(Color(0xFF8E8E93), mediaAccentColor, 0.35f)
+    } else {
+        Color(0xFF8E8E93)
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -1355,7 +1415,7 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            EqualizerVisualizer(isPlaying = media?.isPlaying == true)
+            EqualizerVisualizer(isPlaying = media?.isPlaying == true, barColor = eqTint)
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -1369,7 +1429,7 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
         ) {
             Text(
                 text = formatDuration(currentPosition),
-                color = Color(0xFF8E8E93),
+                color = durationTextTint,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1386,11 +1446,26 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
                     isSeeking = false
                     IslandStateManager.onSeekTo?.invoke(scrubPosition.toLong())
                 },
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color(0xFFE5E5EA),
-                    inactiveTrackColor = Color(0xFF2C2C2E)
-                ),
+                thumb = {
+                    Box(
+                        modifier = Modifier
+                            .width(3.dp)
+                            .height(14.dp)
+                            .clip(RoundedCornerShape(1.5.dp))
+                            .background(sliderActiveTint)
+                    )
+                },
+                track = { sliderState ->
+                    SliderDefaults.Track(
+                        sliderState = sliderState,
+                        drawStopIndicator = null,
+                        drawTick = { _, _ -> },
+                        colors = SliderDefaults.colors(
+                            activeTrackColor = sliderActiveTint,
+                            inactiveTrackColor = sliderInactiveTint
+                        )
+                    )
+                },
                 modifier = Modifier
                     .weight(1f)
                     .height(20.dp)
@@ -1400,7 +1475,7 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
 
             Text(
                 text = formatDuration(duration),
-                color = Color(0xFF8E8E93),
+                color = durationTextTint,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1421,7 +1496,7 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
                 Icon(
                     imageVector = Icons.Default.FastRewind,
                     contentDescription = "Previous",
-                    tint = Color(0xFFE5E5EA),
+                    tint = controlsTint,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -1433,12 +1508,12 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
                 modifier = Modifier
                     .size(50.dp)
                     .clip(CircleShape)
-                    .background(Color.White)
+                    .background(playButtonBg)
             ) {
                 Icon(
                     imageVector = if (media?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = "Play/Pause",
-                    tint = Color.Black,
+                    tint = playButtonIconTint,
                     modifier = Modifier.size(30.dp)
                 )
             }
@@ -1452,7 +1527,7 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
                 Icon(
                     imageVector = Icons.Default.FastForward,
                     contentDescription = "Next",
-                    tint = Color(0xFFE5E5EA),
+                    tint = controlsTint,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -1892,7 +1967,10 @@ fun ExpandedProgressView(notification: NotificationInfo?, onCollapse: () -> Unit
                 Spacer(modifier = Modifier.width(6.dp))
 
                 IconButton(
-                    onClick = onCollapse,
+                    onClick = {
+                        IslandStateManager.dismissCurrentNotification()
+                        onCollapse()
+                    },
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
@@ -1906,8 +1984,20 @@ fun ExpandedProgressView(notification: NotificationInfo?, onCollapse: () -> Unit
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            val rawProgressText = notification?.text ?: "In progress..."
+            val displayProgressText = remember(rawProgressText) {
+                var s = rawProgressText.trim()
+                while (s.startsWith("•") || s.startsWith("·") || s.startsWith("-")) {
+                    s = s.substring(1).trim()
+                }
+                while (s.endsWith("•") || s.endsWith("·") || s.endsWith("-")) {
+                    s = s.substring(0, s.length - 1).trim()
+                }
+                s.ifBlank { "In progress..." }
+            }
+
             Text(
-                text = notification?.text ?: "In progress...",
+                text = displayProgressText,
                 color = Color(0xFFF4F4F5),
                 fontSize = 15.sp,
                 lineHeight = 20.sp,
@@ -2039,7 +2129,7 @@ fun ExpandedRecordingView(recording: ScreenRecordingState, onCollapse: () -> Uni
                 PulsingRecordingDot()
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Screen Recording",
+                    text = "Screen recording",
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
@@ -2054,54 +2144,78 @@ fun ExpandedRecordingView(recording: ScreenRecordingState, onCollapse: () -> Uni
             )
         }
 
-        Text(
-            text = if (recording.isPaused) "Recording paused" else "Capturing screen audio & display",
-            color = Color(0xFFA1A1AA),
-            fontSize = 12.sp
-        )
-
         Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Button(
+            val leftShape = RoundedCornerShape(
+                topStart = 14.dp,
+                bottomStart = 14.dp,
+                topEnd = 4.dp,
+                bottomEnd = 4.dp
+            )
+            FilledTonalButton(
                 onClick = {
                     IslandStateManager.onTogglePauseRecording?.invoke()
                 },
-                colors = ButtonDefaults.buttonColors(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(42.dp),
+                shape = leftShape,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = Color(0xFF2C2C2E),
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(20.dp)
+                    contentColor = Color(0xFFF4F4F5)
+                )
             ) {
                 Icon(
                     imageVector = if (recording.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(if (recording.isPaused) "Resume" else "Pause", fontSize = 12.sp)
+                Text(
+                    text = if (recording.isPaused) "Resume" else "Pause",
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
 
-            Button(
+            val rightShape = RoundedCornerShape(
+                topStart = 4.dp,
+                bottomStart = 4.dp,
+                topEnd = 14.dp,
+                bottomEnd = 14.dp
+            )
+            FilledTonalButton(
                 onClick = {
                     IslandStateManager.onStopRecording?.invoke()
                     onCollapse()
                 },
-                colors = ButtonDefaults.buttonColors(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(42.dp),
+                shape = rightShape,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = Color(0xFF2C2C2E),
-                    contentColor = Color(0xFFE5E5EA)
-                ),
-                shape = RoundedCornerShape(20.dp)
+                    contentColor = Color(0xFFFF453A)
+                )
             ) {
                 Icon(
                     imageVector = Icons.Default.Stop,
                     contentDescription = null,
-                    tint = Color(0xFFE04040),
-                    modifier = Modifier.size(18.dp)
+                    tint = Color(0xFFFF453A),
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Stop", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE5E5EA))
+                Text(
+                    text = "Stop",
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFFF453A)
+                )
             }
         }
     }
@@ -2141,10 +2255,10 @@ fun ExpandedIdleView(onCollapse: () -> Unit) {
 }
 
 @Composable
-fun PulsingRecordingDot() {
+fun PulsingRecordingDot(modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "recording_pulse")
     val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
+        initialValue = 0.35f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(650, easing = FastOutSlowInEasing),
@@ -2154,16 +2268,16 @@ fun PulsingRecordingDot() {
     )
 
     Box(
-        modifier = Modifier
-            .size(10.dp)
-            .scale(1f + (alpha * 0.15f))
+        modifier = modifier
+            .size(11.dp)
+            .scale(1f + (alpha * 0.12f))
             .clip(CircleShape)
-            .background(Color(0xFFE04040).copy(alpha = alpha))
+            .background(Color(0xFFFF3B30).copy(alpha = alpha))
     )
 }
 
 @Composable
-fun EqualizerVisualizer(isPlaying: Boolean) {
+fun EqualizerVisualizer(isPlaying: Boolean, barColor: Color = Color(0xFFE5E5EA)) {
     val transition = rememberInfiniteTransition(label = "eq_bars")
 
     val h1 by transition.animateFloat(
@@ -2208,21 +2322,21 @@ fun EqualizerVisualizer(isPlaying: Boolean) {
                 .width(3.dp)
                 .height((16 * currentH1).dp)
                 .clip(RoundedCornerShape(1.5.dp))
-                .background(Color(0xFFE5E5EA))
+                .background(barColor)
         )
         Box(
             modifier = Modifier
                 .width(3.dp)
                 .height((16 * currentH2).dp)
                 .clip(RoundedCornerShape(1.5.dp))
-                .background(Color(0xFFE5E5EA))
+                .background(barColor)
         )
         Box(
             modifier = Modifier
                 .width(3.dp)
                 .height((16 * currentH3).dp)
                 .clip(RoundedCornerShape(1.5.dp))
-                .background(Color(0xFFE5E5EA))
+                .background(barColor)
         )
     }
 }

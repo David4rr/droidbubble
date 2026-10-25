@@ -1,12 +1,8 @@
 package com.droidbubble.app.ui.main
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Drawable
-import android.media.projection.MediaProjectionManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -117,20 +113,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.droidbubble.app.model.IslandSettings
 import com.droidbubble.app.service.IslandOverlayService
-import com.droidbubble.app.service.ScreenRecordingService
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-
-private val PRESET_COLORS = listOf(
-    0xFF00E5FF to "Cyan",
-    0xFFFF2A85 to "Neon Pink",
-    0xFF00E676 to "Emerald",
-    0xFF7C4DFF to "Purple",
-    0xFFFFAB00 to "Amber",
-    0xFFFFFFFF to "Clean White",
-    0xFFFF1744 to "Crimson",
-    0xFF64B5F6 to "Sky Blue"
-)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -146,27 +130,8 @@ fun MainScreen(
     val installedApps by viewModel.installedApps.collectAsState()
     val isLoadingApps by viewModel.isLoadingApps.collectAsState()
 
-    var showColorPicker by remember { mutableStateOf(false) }
     var showAppFilterSheet by remember { mutableStateOf(false) }
     var appFilterQuery by remember { mutableStateOf("") }
-
-    // Screen Recording Permission Launcher
-    val screenRecordingLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val recordIntent = Intent(context, ScreenRecordingService::class.java).apply {
-                action = ScreenRecordingService.ACTION_START
-                putExtra(ScreenRecordingService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(ScreenRecordingService.EXTRA_RESULT_DATA, result.data)
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(recordIntent)
-            } else {
-                context.startService(recordIntent)
-            }
-        }
-    }
 
     // Re-check permissions on every onResume
     DisposableEffect(lifecycleOwner) {
@@ -228,9 +193,6 @@ fun MainScreen(
                                     headlineContent = {
                                         Text(perm.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                     },
-                                    supportingContent = {
-                                        Text(perm.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    },
                                     leadingContent = {
                                         Box(
                                             modifier = Modifier
@@ -270,7 +232,6 @@ fun MainScreen(
                     ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = { Text("Enable Island", fontWeight = FontWeight.SemiBold) },
-                        supportingContent = { Text("Show the floating overlay across all apps") },
                         leadingContent = {
                             Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         },
@@ -380,7 +341,6 @@ fun MainScreen(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Island Outline", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Display a luminous border around the island") },
                             leadingContent = {
                                 Icon(Icons.Default.CropSquare, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                             },
@@ -396,38 +356,13 @@ fun MainScreen(
                     }
 
                     if (outlineActive) {
-                        SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        SettingsCardItem(position = GroupPosition.BOTTOM) {
                             SliderSettingItem(
                                 label = "Outline Thickness",
                                 value = settings.outlineThicknessDp,
                                 unit = "dp",
                                 valueRange = 0.5f..4.0f,
                                 onValueChange = { viewModel.updateSettings { s -> s.copy(outlineThicknessDp = (it * 10).roundToInt() / 10f) } }
-                            )
-                        }
-
-                        SettingsCardItem(position = GroupPosition.BOTTOM) {
-                            ListItem(
-                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                headlineContent = { Text("Outline Colour", fontWeight = FontWeight.SemiBold) },
-                                supportingContent = { Text("Tap to select vibrant border accent") },
-                                leadingContent = {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(settings.outlineColorArgb))
-                                            .border(1.dp, Color.Gray, CircleShape)
-                                    )
-                                },
-                                trailingContent = {
-                                    OutlinedButton(
-                                        onClick = { showColorPicker = true },
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Text("Change")
-                                    }
-                                }
                             )
                         }
                     }
@@ -439,7 +374,6 @@ fun MainScreen(
                     ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
-                        supportingContent = { Text("Tactile tick on expand, collapse, and dismiss") },
                         leadingContent = {
                             Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
                         },
@@ -472,7 +406,6 @@ fun MainScreen(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Media Player", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Equalizer, album art, progress bar, playback controls") },
                             leadingContent = {
                                 Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color(0xFF64B5F6))
                             },
@@ -491,7 +424,6 @@ fun MainScreen(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Incoming Notifications", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Pop-in dynamic alerts with quick actions & replies") },
                             leadingContent = {
                                 Icon(Icons.Default.Notifications, contentDescription = null, tint = Color(0xFFFFB74D))
                             },
@@ -510,7 +442,6 @@ fun MainScreen(
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Live Progress & Activities", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Real-time progress bars for downloads, rides & transfers") },
                             leadingContent = {
                                 Icon(Icons.Default.Animation, contentDescription = null, tint = Color(0xFF42A5F5))
                             },
@@ -530,7 +461,6 @@ fun MainScreen(
                             ListItem(
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                 headlineContent = { Text("Per-App Notification Filter", fontWeight = FontWeight.SemiBold) },
-                                supportingContent = { Text("${settings.blockedPackages.size} apps muted") },
                                 leadingContent = {
                                     Icon(Icons.Default.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                 },
@@ -549,11 +479,10 @@ fun MainScreen(
                         }
                     }
 
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                    SettingsCardItem(position = GroupPosition.BOTTOM) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Screen Recording Indicator", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Live timer, pulsing red dot and stop/pause controls") },
                             leadingContent = {
                                 Icon(Icons.Default.Videocam, contentDescription = null, tint = Color(0xFFFF5252))
                             },
@@ -567,27 +496,6 @@ fun MainScreen(
                             }
                         )
                     }
-
-                    SettingsCardItem(position = GroupPosition.BOTTOM) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp)
-                        ) {
-                            FilledTonalButton(
-                                onClick = {
-                                    val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                                    screenRecordingLauncher.launch(projectionManager.createScreenCaptureIntent())
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Start Test Screen Recording")
-                            }
-                        }
-                    }
                 }
             }
 
@@ -595,59 +503,6 @@ fun MainScreen(
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }
-    }
-
-    // Color Picker Dialog
-    if (showColorPicker) {
-        AlertDialog(
-            onDismissRequest = { showColorPicker = false },
-            title = { Text("Choose Outline Colour", fontWeight = FontWeight.Bold) },
-            text = {
-                Column {
-                    Text("Select a preset or custom accent:", style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceAround
-                    ) {
-                        PRESET_COLORS.take(4).forEach { (colorArgb, name) ->
-                            ColorCircleItem(
-                                colorArgb = colorArgb,
-                                name = name,
-                                isSelected = settings.outlineColorArgb == colorArgb,
-                                onClick = {
-                                    viewModel.updateSettings { it.copy(outlineColorArgb = colorArgb) }
-                                }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceAround
-                    ) {
-                        PRESET_COLORS.drop(4).forEach { (colorArgb, name) ->
-                            ColorCircleItem(
-                                colorArgb = colorArgb,
-                                name = name,
-                                isSelected = settings.outlineColorArgb == colorArgb,
-                                onClick = {
-                                    viewModel.updateSettings { it.copy(outlineColorArgb = colorArgb) }
-                                }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showColorPicker = false }) {
-                    Text("Done")
-                }
-            }
-        )
     }
 
     // App Filter Modal Bottom Sheet
@@ -668,11 +523,6 @@ fun MainScreen(
                     text = "Per-App Notification Filter",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Toggle off apps to ignore their notifications on the island",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -705,7 +555,6 @@ fun MainScreen(
                     items(filteredApps, key = { it.packageName }) { app ->
                         ListItem(
                             headlineContent = { Text(app.appName, fontWeight = FontWeight.Medium) },
-                            supportingContent = { Text(app.packageName, style = MaterialTheme.typography.bodySmall, maxLines = 1) },
                             leadingContent = {
                                 if (app.icon != null) {
                                     val bitmap = remember(app.icon) { app.icon.toBitmap(96, 96) }
@@ -877,42 +726,5 @@ fun SliderSettingItem(
             steps = steps,
             modifier = Modifier.height(24.dp)
         )
-    }
-}
-
-@Composable
-fun ColorCircleItem(
-    colorArgb: Long,
-    name: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(onClick = onClick)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color(colorArgb))
-                .border(
-                    width = if (isSelected) 3.dp else 1.dp,
-                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray,
-                    shape = CircleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = if (colorArgb == 0xFFFFFFFFL) Color.Black else Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(name, fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }
