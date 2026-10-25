@@ -10,7 +10,6 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -395,37 +394,25 @@ fun IslandOverlayRoot(
     val targetCard2Alpha = if (card2Expanded && showSecondaryCard) 1f else 0f
     val targetCard2OffsetY = if (card2Expanded && showSecondaryCard) 0.dp else (-14).dp
 
-    var wasExpanded by remember { mutableStateOf(isExpanded) }
-    var wasOccupied by remember { mutableStateOf(isOccupied) }
-
-    var lastSecondaryPriority by remember { mutableStateOf<IslandPriority?>(null) }
-    if (secondaryPriority != null) {
-        lastSecondaryPriority = secondaryPriority
-    }
-    val displaySecondaryPriority = secondaryPriority ?: lastSecondaryPriority
-
-    // Secondary Circle Island emergence & collapse:
-    // When emerging, it blossoms from 0.dp (middle of punch hole) and shoots outward with spring bounce!
-    // When collapsing, it glides all the way back into 0.dp (middle of punch hole) while fading away.
     val bubbleSize = settings.heightDp.dp
     val compactMainHalf = (settings.widthDp * 0.74f).dp / 2f
-    val targetBubbleRestingX = compactMainHalf + 8.dp + (bubbleSize / 2f)
-    val targetBubbleOffsetX = if (!isExpanded && isDual && !isCharging && isOccupied) {
-        targetBubbleRestingX
-    } else {
-        0.dp
+    val bubbleGap = 6.dp
+    val restingBubbleCenterX = compactMainHalf + bubbleGap + (bubbleSize / 2f)
+
+    val targetBubbleOffsetX = when {
+        !isCharging && isDual && !isExpanded && isOccupied -> restingBubbleCenterX
+        else -> 0.dp
     }
 
-    // Dedicated spring animation for secondary bubble horizontal motion:
-    val bubbleOffsetAnimSpec = if (targetBubbleOffsetX > 0.dp) {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.52f, // Elastic spring bounce on emergence past resting position!
-            stiffness = 300f * speedSq
+    val bubbleOffsetAnimSpec = if (isDual && !isExpanded) {
+        spring<Dp>(
+            dampingRatio = 0.63f, // Slight bounce! Gently overshoots by ~3-4dp and bounces back
+            stiffness = 320f * speedSq
         )
     } else {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.82f, // Smoothly glides straight into 0.dp (middle of punch hole)
-            stiffness = 360f * speedSq
+        spring<Dp>(
+            dampingRatio = 0.85f, // Smooth retraction back inside the punch hole
+            stiffness = 380f * speedSq
         )
     }
 
@@ -468,34 +455,6 @@ fun IslandOverlayRoot(
         if (!isExpanded) {
             card1OffsetX = 0f
             card2OffsetX = 0f
-        }
-    }
-
-    // Parentheses Accent Shoot Animation:
-    // When the minimised island emerges and does the bounce, the parentheses shoot out just a few pixels extra and spring back to normal!
-    val parenthesisExtraShoot = remember { Animatable(0f) }
-
-    LaunchedEffect(isExpanded, isOccupied) {
-        val justMinimised = wasExpanded && !isExpanded
-        val justAppeared = !wasOccupied && isOccupied && !isExpanded
-        wasExpanded = isExpanded
-        wasOccupied = isOccupied
-
-        if (justMinimised || justAppeared) {
-            parenthesisExtraShoot.snapTo(0f)
-            // Wait for minimised island pill to expand close to full width (~105ms at 1x speed), entering its bounce
-            kotlinx.coroutines.delay((105L / speed).toLong())
-            // Shoot outward extra with spring physics and settle back to normal (0.dp extra)
-            parenthesisExtraShoot.animateTo(
-                targetValue = 0f,
-                initialVelocity = 220f * speed,
-                animationSpec = spring(
-                    dampingRatio = 0.60f,
-                    stiffness = 320f * speedSq
-                )
-            )
-        } else if (isExpanded || !isOccupied) {
-            parenthesisExtraShoot.snapTo(0f)
         }
     }
 
@@ -802,7 +761,6 @@ fun IslandOverlayRoot(
         // Shrinks horizontally to 0 width while the card expands downwards, and blossoms from 0 width when minimising!
         Box(
             modifier = Modifier
-                .fillMaxWidth()
                 .offset {
                     IntOffset(
                         x = 0,
@@ -811,62 +769,74 @@ fun IslandOverlayRoot(
                 },
             contentAlignment = Alignment.TopCenter
         ) {
-            val compactPillAlpha = ((animatedCompactWidth - 6.dp) / 22.dp).coerceIn(0f, 1f)
+            // 1. Auxiliary Circular Island Bubble: Placed on the LAYER BELOW (rendered first so main pill covers it!)
+            // Fixed circular shape & size; emerges and retracts purely along the X axis from the middle of the punch hole (x = 0)
+            if (isDual || animatedBubbleOffsetX > 1.dp) {
+                val bubbleOffsetXPx = with(LocalDensity.current) { animatedBubbleOffsetX.roundToPx() }
+                val bubbleAlpha = if (isExpanded) {
+                    ((1f - expandProgress * 4f).coerceIn(0f, 1f))
+                } else if (!isOccupied) {
+                    0f
+                } else {
+                    1f
+                }
 
-            // Opacity of secondary bubble:
-            // When expanding or unoccupied, it fades away into the punch hole in exact sync with the main compact pill.
-            // When retreating while main island stays in compact mode, it smoothly fades in the last 18dp before the punch hole center.
-            val bubbleAlpha = if (isExpanded || !isOccupied) {
-                compactPillAlpha
-            } else {
-                (animatedBubbleOffsetX / (bubbleSize / 2f)).coerceIn(0f, 1f)
-            }
+                if (bubbleAlpha > 0.01f) {
+                    val emergedDistance = animatedBubbleOffsetX - (compactMainHalf - bubbleSize / 2f)
+                    val contentAlpha = ((emergedDistance - bubbleSize * 0.35f) / (bubbleSize * 0.55f)).coerceIn(0f, 1f) * bubbleAlpha
 
-            // 1. Auxiliary Circular Island Bubble: Centered horizontally at animatedBubbleOffsetX
-            // Height is strictly fixed at bubbleSize (matching the main island). Only moves horizontally on X axis!
-            if (animatedBubbleOffsetX > 0.5.dp && bubbleAlpha > 0.005f) {
-                Box(
-                    modifier = Modifier
-                        .offset { IntOffset(x = animatedBubbleOffsetX.roundToPx(), y = 0) }
-                        .size(bubbleSize)
-                        .graphicsLayer { alpha = bubbleAlpha }
-                        .shadow(
-                            elevation = 8.dp * bubbleAlpha,
-                            shape = CircleShape
-                        )
-                        .clip(CircleShape)
-                        .background(Color.Black)
-                        .then(
-                            if (settings.showOutline && animatedBubbleOffsetX > (bubbleSize / 2f)) {
-                                Modifier.border(
-                                    width = settings.outlineThicknessDp.dp,
-                                    color = secondaryOutlineColor,
-                                    shape = CircleShape
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(x = bubbleOffsetXPx, y = 0) }
+                            .size(bubbleSize)
+                            .graphicsLayer { alpha = bubbleAlpha }
+                            .shadow(
+                                elevation = 6.dp * bubbleAlpha,
+                                shape = CircleShape
+                            )
+                            .clip(CircleShape)
+                            .background(Color.Black)
+                            .then(
+                                if (settings.showOutline && animatedBubbleOffsetX > compactMainHalf * 0.7f) {
+                                    Modifier.border(
+                                        width = settings.outlineThicknessDp.dp,
+                                        color = secondaryOutlineColor,
+                                        shape = CircleShape
+                                    )
+                                } else Modifier
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                triggerHaptic()
+                                IslandStateManager.expand()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (contentAlpha > 0.05f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer { alpha = contentAlpha },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AuxiliaryBubbleContent(
+                                    priority = secondaryPriority,
+                                    media = currentMedia,
+                                    notification = currentNotif,
+                                    recording = recording
                                 )
-                            } else Modifier
-                        )
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            triggerHaptic()
-                            IslandStateManager.expand()
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (animatedBubbleOffsetX > (bubbleSize / 2f)) {
-                        AuxiliaryBubbleContent(
-                            priority = displaySecondaryPriority,
-                            media = currentMedia,
-                            notification = currentNotif,
-                            recording = recording
-                        )
+                            }
+                        }
                     }
                 }
             }
 
-            // 2. Main Compact Pill (Shrinks to 0 width on expand, expands from 0 width on collapse)
+            // 2. Main Compact Pill: Rendered on top of the bubble (covers it when sliding near x = 0)
             if (animatedCompactWidth > 1.dp) {
+                // Smoothly fade away over the last few frames before vanishing into the punch hole, and fade in on emergence
+                val compactPillAlpha = ((animatedCompactWidth - 6.dp) / 22.dp).coerceIn(0f, 1f)
                 Box(
                     modifier = Modifier
                         .width(animatedCompactWidth)
@@ -1002,12 +972,12 @@ fun IslandOverlayRoot(
                 }
             }
 
-            // Parentheses Accents: Neat parentheses-shaped brackets on each side of the island
+            // 3. Parentheses Accents: Neat parentheses-shaped brackets on each side of the island
             // Shorter than the height of the island, smoothly positioning symmetrically around 1 or 2 activities, and neatly close to the edges.
             val targetParenthesisAlpha = if (!isOccupied) 0f else ((1f - expandProgress * 3.5f).coerceIn(0f, 1f))
             val parenthesisAlphaAnim by animateFloatAsState(
                 targetValue = targetParenthesisAlpha,
-                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = (140 / speed).roundToInt(), easing = FastOutSlowInEasing),
                 label = "parenthesisAlpha"
             )
             if (parenthesisAlphaAnim > 0.01f && animatedCompactWidth > 20.dp) {
@@ -1020,29 +990,25 @@ fun IslandOverlayRoot(
                 val pYPx = with(density) { ((settings.heightDp.dp - parenthesisHeight) / 2f).roundToPx() }
                 val tipOffsetFromCenter = (parenthesisWidth - parenthesisStroke) / 2f
 
-                val extraShootDp = parenthesisExtraShoot.value.dp
-
                 // Left parenthesis `(`: tips facing right are at centerX + tipOffsetFromCenter.
-                // We want tips to sit exactly at islandLeft - parenthesisGap - extraShootDp.
+                // We want tips to sit exactly at islandLeft - parenthesisGap.
                 val islandLeftDp = -animatedCompactWidth / 2f
                 val leftCenterXPx = with(density) {
-                    (islandLeftDp - parenthesisGap - extraShootDp - tipOffsetFromCenter).roundToPx()
+                    (islandLeftDp - parenthesisGap - tipOffsetFromCenter).roundToPx()
                 }
 
                 // Right parenthesis `)`: tips facing left are at centerX - tipOffsetFromCenter.
-                // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap + rightExtraShootDp.
-                // In dual mode, the secondary bubble is emerging and bouncing to the right,
-                // so we only add a subtle extra shoot on the right side so it doesn't push the parenthesis too much!
-                val isBubbleShowing = !isCharging && (isDual || animatedBubbleOffsetX > 10.dp)
-                val rightExtraShootDp = if (isBubbleShowing && animatedBubbleOffsetX > compactMainHalf) {
-                    extraShootDp * 0.25f
+                // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap.
+                // When the secondary bubble emerges, its right edge pushes the parenthesis with it;
+                // because the bubble has a slight spring bounce, the parenthesis gets pushed slightly and bounces back organically!
+                val bubbleRightEdge = animatedBubbleOffsetX + (bubbleSize / 2f)
+                val rightContentEdgeDp = if (!isCharging && animatedBubbleOffsetX > 1.dp) {
+                    maxOf(animatedCompactWidth / 2f, bubbleRightEdge)
                 } else {
-                    extraShootDp
+                    animatedCompactWidth / 2f
                 }
-
-                val rightContentEdgeDp = maxOf(animatedCompactWidth / 2f, animatedBubbleOffsetX + (bubbleSize / 2f))
                 val rightCenterXPx = with(density) {
-                    (rightContentEdgeDp + parenthesisGap + rightExtraShootDp + tipOffsetFromCenter).roundToPx()
+                    (rightContentEdgeDp + parenthesisGap + tipOffsetFromCenter).roundToPx()
                 }
 
                 val bracketColor = Color.Black
@@ -1072,13 +1038,15 @@ fun IslandOverlayRoot(
                 )
             }
 
-            // Extended hit-box for compact mode: covers the pill + extends 36dp downwards into the safe zone below the status bar
+            // 4. Extended hit-box for compact mode: covers the pill + bubble + extends 36dp downwards into the safe zone
             if (!isExpanded && isOccupied) {
-                val compactHitWidth = if (isDual || animatedBubbleOffsetX > 10.dp) {
-                    (maxOf(animatedCompactWidth / 2f, animatedBubbleOffsetX + (bubbleSize / 2f)) + 24.dp) * 2f
+                val bubbleRightEdge = animatedBubbleOffsetX + (bubbleSize / 2f)
+                val rightContentEdge = if (!isCharging && animatedBubbleOffsetX > 1.dp) {
+                    maxOf(animatedCompactWidth / 2f, bubbleRightEdge)
                 } else {
-                    animatedCompactWidth + 36.dp
+                    animatedCompactWidth / 2f
                 }
+                val compactHitWidth = (rightContentEdge + 20.dp) * 2f
                 Box(
                     modifier = Modifier
                         .width(compactHitWidth)

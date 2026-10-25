@@ -643,19 +643,10 @@ class NotificationReceiverService : NotificationListenerService() {
         return getAppIconBitmap(packageName)
     }
 
-    private val appIconCache = android.util.LruCache<String, Bitmap>(64)
-
     private fun getAppIconBitmap(packageName: String): Bitmap? {
-        synchronized(appIconCache) {
-            appIconCache.get(packageName)?.let { return it }
-        }
         return try {
             val drawable = packageManager.getApplicationIcon(packageName)
-            val bitmap = drawableToBitmap(drawable)
-            synchronized(appIconCache) {
-                appIconCache.put(packageName, bitmap)
-            }
-            bitmap
+            drawableToBitmap(drawable)
         } catch (e: Exception) {
             null
         }
