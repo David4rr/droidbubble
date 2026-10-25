@@ -16,10 +16,18 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Releasable debug apk
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+
+    base {
+        archivesName.set("Droidbubble")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
