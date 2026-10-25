@@ -448,13 +448,16 @@ class IslandOverlayService : Service() {
             IslandStateManager.isKeyboardFocused.collectLatest { focused ->
                 val view = composeView ?: return@collectLatest
                 val params = layoutParams ?: return@collectLatest
-                if (focused) {
-                    params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+                val newFlags = if (focused) {
+                    params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
                 } else {
-                    params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 }
-                disableMoveAnimation(params)
-                runCatching { windowManager?.updateViewLayout(view, params) }
+                if (params.flags != newFlags) {
+                    params.flags = newFlags
+                    disableMoveAnimation(params)
+                    runCatching { windowManager?.updateViewLayout(view, params) }
+                }
             }
         }
 
@@ -487,14 +490,23 @@ class IslandOverlayService : Service() {
             isCollapsing = false
             wasExpanded = true
             // Full screen touch area to allow tapping outside to dismiss
-            params.width = WindowManager.LayoutParams.MATCH_PARENT
-            params.height = WindowManager.LayoutParams.MATCH_PARENT
-            params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            params.x = 0
-            params.y = 0
-            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            disableMoveAnimation(params)
-            runCatching { windowManager?.updateViewLayout(view, params) }
+            val newWidth = WindowManager.LayoutParams.MATCH_PARENT
+            val newHeight = WindowManager.LayoutParams.MATCH_PARENT
+            val newGravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            val newX = 0
+            val newY = 0
+            val newFlags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+
+            if (params.width != newWidth || params.height != newHeight || params.x != newX || params.y != newY || params.gravity != newGravity || params.flags != newFlags) {
+                params.width = newWidth
+                params.height = newHeight
+                params.gravity = newGravity
+                params.x = newX
+                params.y = newY
+                params.flags = newFlags
+                disableMoveAnimation(params)
+                runCatching { windowManager?.updateViewLayout(view, params) }
+            }
         } else {
             val isCharging = IslandStateManager.isChargingActive
             val isOccupied = IslandStateManager.isOccupied
@@ -518,22 +530,39 @@ class IslandOverlayService : Service() {
             fun applyCompactBounds() {
                 collapseJob?.cancel()
                 if (isOccupied) {
-                    params.width = (totalWidthDp * density).toInt()
-                    params.x = (currentSettings.horizontalOffsetDp * density).toInt()
-                    params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt()
-                    params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                    params.y = 0
-                    params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-                    disableMoveAnimation(params)
-                    runCatching { windowManager?.updateViewLayout(view, params) }
+                    val newWidth = (totalWidthDp * density).toInt()
+                    val newHeight = ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt()
+                    val newX = (currentSettings.horizontalOffsetDp * density).toInt()
+                    val newY = 0
+                    val newGravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    val newFlags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+
+                    if (params.width != newWidth || params.height != newHeight || params.x != newX || params.y != newY || params.gravity != newGravity || params.flags != newFlags) {
+                        params.width = newWidth
+                        params.height = newHeight
+                        params.x = newX
+                        params.y = newY
+                        params.gravity = newGravity
+                        params.flags = newFlags
+                        disableMoveAnimation(params)
+                        runCatching { windowManager?.updateViewLayout(view, params) }
+                    }
                 } else {
-                    params.width = 1
-                    params.height = 1
-                    params.x = 0
-                    params.y = 0
-                    params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    disableMoveAnimation(params)
-                    runCatching { windowManager?.updateViewLayout(view, params) }
+                    val newWidth = 1
+                    val newHeight = 1
+                    val newX = 0
+                    val newY = 0
+                    val newFlags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+
+                    if (params.width != newWidth || params.height != newHeight || params.x != newX || params.y != newY || params.flags != newFlags) {
+                        params.width = newWidth
+                        params.height = newHeight
+                        params.x = newX
+                        params.y = newY
+                        params.flags = newFlags
+                        disableMoveAnimation(params)
+                        runCatching { windowManager?.updateViewLayout(view, params) }
+                    }
                 }
             }
 
@@ -561,13 +590,21 @@ class IslandOverlayService : Service() {
                 collapseJob = serviceScope.launch {
                     kotlinx.coroutines.delay(360)
                     if (!IslandStateManager.isOccupied && !IslandStateManager.isExpanded.value) {
-                        params.width = 1
-                        params.height = 1
-                        params.x = 0
-                        params.y = 0
-                        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                        disableMoveAnimation(params)
-                        runCatching { windowManager?.updateViewLayout(view, params) }
+                        val newWidth = 1
+                        val newHeight = 1
+                        val newX = 0
+                        val newY = 0
+                        val newFlags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+
+                        if (params.width != newWidth || params.height != newHeight || params.x != newX || params.y != newY || params.flags != newFlags) {
+                            params.width = newWidth
+                            params.height = newHeight
+                            params.x = newX
+                            params.y = newY
+                            params.flags = newFlags
+                            disableMoveAnimation(params)
+                            runCatching { windowManager?.updateViewLayout(view, params) }
+                        }
                     }
                 }
             } else {

@@ -28,14 +28,21 @@ class IslandTouchManager(private val overlayView: View) {
     private val compactRects = mutableListOf<Rect>()
 
     fun updateCompactBounds(rects: List<Rect>, occupied: Boolean, expanded: Boolean) {
-        synchronized(compactRects) {
-            compactRects.clear()
-            compactRects.addAll(rects)
-            isOccupied = occupied
-            isExpanded = expanded
+        val changed = synchronized(compactRects) {
+            val sameRects = compactRects.size == rects.size && compactRects.containsAll(rects)
+            if (sameRects && isOccupied == occupied && isExpanded == expanded) {
+                false
+            } else {
+                compactRects.clear()
+                compactRects.addAll(rects)
+                isOccupied = occupied
+                isExpanded = expanded
+                true
+            }
         }
+        if (!changed) return
+
         overlayView.post {
-            overlayView.requestLayout()
             overlayView.invalidate()
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT_WATCH) {
                 overlayView.requestApplyInsets()
