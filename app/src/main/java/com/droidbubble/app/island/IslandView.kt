@@ -10,6 +10,7 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -467,6 +468,35 @@ fun IslandOverlayRoot(
         if (!isExpanded) {
             card1OffsetX = 0f
             card2OffsetX = 0f
+        }
+    }
+
+    // Parentheses overshoot animation: curve shoots out with dynamic spring physics and settles
+    val parenthesisExtraShoot = remember { Animatable(0f) }
+    var wasExpanded by remember { mutableStateOf(isExpanded) }
+    var wasOccupied by remember { mutableStateOf(isOccupied) }
+
+    LaunchedEffect(isExpanded, isOccupied) {
+        val justMinimised = wasExpanded && !isExpanded
+        val justAppeared = !wasOccupied && isOccupied && !isExpanded
+        wasExpanded = isExpanded
+        wasOccupied = isOccupied
+
+        if (justMinimised || justAppeared) {
+            parenthesisExtraShoot.snapTo(0f)
+            // Wait for minimised island pill to expand close to punch hole exit (~70ms at 1x speed)
+            kotlinx.coroutines.delay((70L / speed).toLong().coerceAtLeast(10L))
+            // Shoot outward from the main island with spring bounce and settle back to 0
+            parenthesisExtraShoot.animateTo(
+                targetValue = 0f,
+                initialVelocity = 320f * speed,
+                animationSpec = spring(
+                    dampingRatio = 0.58f,
+                    stiffness = 260f * speedSq
+                )
+            )
+        } else if (isExpanded || !isOccupied) {
+            parenthesisExtraShoot.snapTo(0f)
         }
     }
 
@@ -997,12 +1027,18 @@ fun IslandOverlayRoot(
             val targetParenthesisAlpha = if (!isOccupied) 0f else ((1f - expandProgress * 3.5f).coerceIn(0f, 1f))
             val parenthesisAlphaAnim by animateFloatAsState(
                 targetValue = targetParenthesisAlpha,
-                animationSpec = tween(durationMillis = (140 / speed).roundToInt(), easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = (130 / speed).roundToInt(), easing = FastOutSlowInEasing),
                 label = "parenthesisAlpha"
             )
-            if (parenthesisAlphaAnim > 0.01f && animatedCompactWidth > 20.dp) {
-                val parenthesisHeight = (settings.heightDp.dp * 0.50f).coerceIn(15.dp, 20.dp)
-                val parenthesisWidth = 4.5.dp
+
+            // Fades in a split second earlier as the island begins emerging from the punch hole
+            val parenthesisEmergenceAlpha = (animatedCompactWidth / 14.dp).coerceIn(0f, 1f)
+            val effectiveParenthesisAlpha = parenthesisAlphaAnim * parenthesisEmergenceAlpha
+
+            if (effectiveParenthesisAlpha > 0.01f && animatedCompactWidth > 3.dp) {
+                val parenthesisHeight = (settings.heightDp.dp * 0.52f).coerceIn(16.dp, 21.dp)
+                val extraShootDp = parenthesisExtraShoot.value.dp
+                val parenthesisWidth = 5.0.dp + (extraShootDp * 0.20f)
                 val parenthesisGap = 3.5.dp
                 val parenthesisStroke = 1.8.dp
                 val density = LocalDensity.current
@@ -1011,16 +1047,15 @@ fun IslandOverlayRoot(
                 val tipOffsetFromCenter = (parenthesisWidth - parenthesisStroke) / 2f
 
                 // Left parenthesis `(`: tips facing right are at centerX + tipOffsetFromCenter.
-                // We want tips to sit exactly at islandLeft - parenthesisGap.
+                // Sits at islandLeft - parenthesisGap - extraShootDp.
                 val islandLeftDp = -animatedCompactWidth / 2f
                 val leftCenterXPx = with(density) {
-                    (islandLeftDp - parenthesisGap - tipOffsetFromCenter).roundToPx()
+                    (islandLeftDp - parenthesisGap - extraShootDp - tipOffsetFromCenter).roundToPx()
                 }
 
                 // Right parenthesis `)`: tips facing left are at centerX - tipOffsetFromCenter.
-                // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap.
-                // When the secondary bubble emerges, its right edge pushes the parenthesis with it;
-                // because the bubble has a slight spring bounce, the parenthesis gets pushed slightly and bounces back organically!
+                // Sits at rightContentEdgeDp + parenthesisGap + extraShootDp.
+                // When emerging, curve shoots out slightly further from the island and settles back.
                 val bubbleRightEdge = animatedBubbleOffsetX + (bubbleSize / 2f)
                 val rightContentEdgeDp = if (!isCharging && animatedBubbleOffsetX > 1.dp) {
                     maxOf(animatedCompactWidth / 2f, bubbleRightEdge)
@@ -1028,7 +1063,7 @@ fun IslandOverlayRoot(
                     animatedCompactWidth / 2f
                 }
                 val rightCenterXPx = with(density) {
-                    (rightContentEdgeDp + parenthesisGap + tipOffsetFromCenter).roundToPx()
+                    (rightContentEdgeDp + parenthesisGap + extraShootDp + tipOffsetFromCenter).roundToPx()
                 }
 
                 val bracketColor = Color.Black
@@ -1042,7 +1077,7 @@ fun IslandOverlayRoot(
                     color = bracketColor,
                     modifier = Modifier
                         .offset { IntOffset(x = leftCenterXPx, y = pYPx) }
-                        .graphicsLayer { alpha = parenthesisAlphaAnim * compactPillAlpha }
+                        .graphicsLayer { alpha = effectiveParenthesisAlpha }
                 )
 
                 // Right Parenthesis `)`
@@ -1054,7 +1089,7 @@ fun IslandOverlayRoot(
                     color = bracketColor,
                     modifier = Modifier
                         .offset { IntOffset(x = rightCenterXPx, y = pYPx) }
-                        .graphicsLayer { alpha = parenthesisAlphaAnim * compactPillAlpha }
+                        .graphicsLayer { alpha = effectiveParenthesisAlpha }
                 )
             }
 
