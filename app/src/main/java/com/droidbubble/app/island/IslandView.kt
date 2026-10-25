@@ -846,9 +846,12 @@ fun IslandOverlayRoot(
             }
 
             // 2. Main Compact Pill: Rendered on top of the bubble (covers it when sliding near x = 0)
-            if (animatedCompactWidth > 1.dp) {
-                // Smoothly fade away over the last few frames before vanishing into the punch hole, and fade in on emergence
-                val compactPillAlpha = ((animatedCompactWidth - 6.dp) / 22.dp).coerceIn(0f, 1f)
+            if (animatedCompactWidth > 0.5.dp) {
+                // Smoothly fade in over the first frames where it is barely a circle emerging from the punch hole,
+                // and smoothly fade out when shrinking back into the punch hole.
+                val circleThreshold = (settings.heightDp.dp * 0.95f).coerceAtLeast(30.dp)
+                val emergenceProgress = (animatedCompactWidth / circleThreshold).coerceIn(0f, 1f)
+                val compactPillAlpha = emergenceProgress * emergenceProgress * (3f - 2f * emergenceProgress)
                 Box(
                     modifier = Modifier
                         .width(animatedCompactWidth)
