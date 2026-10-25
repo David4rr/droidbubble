@@ -33,6 +33,7 @@ class SettingsRepository(private val context: Context) {
         val SHOW_NOTIFICATIONS = booleanPreferencesKey("show_notifications")
         val SHOW_LIVE_PROGRESS = booleanPreferencesKey("show_live_progress")
         val SHOW_SCREEN_RECORDING = booleanPreferencesKey("show_screen_recording")
+        val SHOW_IN_LANDSCAPE = booleanPreferencesKey("show_in_landscape")
         val ANIMATION_SPEED_MULTIPLIER = floatPreferencesKey("anim_speed_multiplier")
         val LEGACY_ANIMATION_SPEED = stringPreferencesKey("animation_speed")
         val BLOCKED_PACKAGES = stringSetPreferencesKey("blocked_packages")
@@ -64,6 +65,7 @@ class SettingsRepository(private val context: Context) {
             showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
             showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
             showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+            showInLandscape = preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] ?: false,
             animationSpeed = resolvedSpeed,
             blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
             restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true
@@ -96,6 +98,7 @@ class SettingsRepository(private val context: Context) {
                 showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
                 showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
                 showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+                showInLandscape = preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] ?: false,
                 animationSpeed = resolvedSpeed,
                 blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
                 restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true
@@ -118,6 +121,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_NOTIFICATIONS] = newSettings.showNotifications
             preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] = newSettings.showLiveProgress
             preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] = newSettings.showScreenRecording
+            preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] = newSettings.showInLandscape
             preferences[PreferencesKeys.ANIMATION_SPEED_MULTIPLIER] = newSettings.animationSpeed
             preferences.remove(PreferencesKeys.LEGACY_ANIMATION_SPEED)
             preferences[PreferencesKeys.BLOCKED_PACKAGES] = newSettings.blockedPackages

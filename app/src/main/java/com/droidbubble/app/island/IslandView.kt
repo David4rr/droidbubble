@@ -187,18 +187,21 @@ fun IslandOverlayRoot(
     val charging by IslandStateManager.activeCharging.collectAsState()
 
     val view = LocalView.current
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val allowInOrientation = settings.isEnabled && (settings.showInLandscape || !isLandscape)
 
     val currentMedia = media
     val currentNotif = notification
     val mediaArt = currentMedia?.albumArt ?: currentMedia?.appIcon
     val mediaAccentColor = remember(mediaArt) { extractMediaAccentColor(mediaArt) }
-    val isRecording = recording.isRecording && settings.showScreenRecording
-    val isProgress = currentNotif?.hasProgress == true && settings.showLiveProgress
-    val isNotification = currentNotif != null && !isProgress && settings.showNotifications
-    val isMedia = currentMedia != null && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
-    val isCharging = charging != null
+    val isRecording = allowInOrientation && recording.isRecording && settings.showScreenRecording
+    val isProgress = allowInOrientation && currentNotif?.hasProgress == true && settings.showLiveProgress
+    val isNotification = allowInOrientation && currentNotif != null && !isProgress && settings.showNotifications
+    val isMedia = allowInOrientation && currentMedia != null && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
+    val isCharging = allowInOrientation && charging != null
 
-    val isOccupied = isRecording || isNotification || isMedia || isProgress || isCharging
+    val isOccupied = allowInOrientation && (isRecording || isNotification || isMedia || isProgress || isCharging)
 
     // Determine dual-island state (when 2+ activities occupy the island, temporarily overshadowed by charging)
     val activeCount = (if (isRecording) 1 else 0) +
@@ -227,7 +230,7 @@ fun IslandOverlayRoot(
     }
 
     // Dynamic non-customizable outline colors (around 15% opacity):
-    val redRecordingOutline = Color(0xFFFF3B30).copy(alpha = 0.50f)
+    val redRecordingOutline = Color(0xFFFF3B30).copy(alpha = 0.15f)
     val defaultTaskOutline = Color.White.copy(alpha = 0.15f)
     val mediaOutline = if (mediaAccentColor != Color.Transparent) {
         mediaAccentColor.copy(alpha = 0.15f)
@@ -2293,7 +2296,7 @@ fun ExpandedRecordingView(recording: ScreenRecordingState, onCollapse: () -> Uni
                 Text(
                     text = "Screen recording",
                     color = Color.White,
-                    fontSize = 14.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
             }

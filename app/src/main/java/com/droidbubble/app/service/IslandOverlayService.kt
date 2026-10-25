@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.BatteryManager
@@ -278,6 +279,11 @@ class IslandOverlayService : Service() {
         return START_STICKY
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateWindowState(IslandStateManager.isExpanded.value)
+    }
+
     private fun startForegroundService() {
         val openIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
@@ -342,7 +348,9 @@ class IslandOverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
-        val isOccupied = IslandStateManager.isOccupied
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val allowedInOrientation = currentSettings.isEnabled && (currentSettings.showInLandscape || !isLandscape)
+        val isOccupied = IslandStateManager.isOccupied && allowedInOrientation
         val isCharging = IslandStateManager.isChargingActive
         val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
                 (if (IslandStateManager.isNotificationActive) 1 else 0) +
@@ -481,6 +489,22 @@ class IslandOverlayService : Service() {
         val view = composeView ?: return
         val params = layoutParams ?: return
         val density = resources.displayMetrics.density
+
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val allowedInOrientation = currentSettings.isEnabled && (currentSettings.showInLandscape || !isLandscape)
+
+        if (!allowedInOrientation) {
+            collapseJob?.cancel()
+            isCollapsing = false
+            params.width = 1
+            params.height = 1
+            params.x = 0
+            params.y = 0
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            disableMoveAnimation(params)
+            runCatching { windowManager?.updateViewLayout(view, params) }
+            return
+        }
 
         if (expanded) {
             collapseJob?.cancel()

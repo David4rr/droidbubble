@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RoundedCorner
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.ScreenSearchDesktop
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Straighten
@@ -353,7 +354,7 @@ fun MainScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Island Outline", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.CropSquare, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                                Icon(Icons.Default.CropSquare, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
@@ -381,22 +382,45 @@ fun MainScreen(
             }
 
             item {
-                SettingsCardItem(position = GroupPosition.SINGLE) {
-                    ListItem(
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
-                        leadingContent = {
-                            Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
-                        },
-                        trailingContent = {
-                            Switch(
-                                checked = settings.hapticsEnabled,
-                                onCheckedChange = { haptics ->
-                                    viewModel.updateSettings { it.copy(hapticsEnabled = haptics) }
-                                }
-                            )
-                        }
-                    )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SettingsCardItem(position = GroupPosition.TOP) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.hapticsEnabled,
+                                    onCheckedChange = { haptics ->
+                                        viewModel.updateSettings { it.copy(hapticsEnabled = haptics) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Show in Landscape", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.showInLandscape,
+                                    onCheckedChange = { inLandscape ->
+                                        viewModel.updateSettings { it.copy(showInLandscape = inLandscape) }
+                                    }
+                                )
+                            }
+                        )
+                    }
                 }
             }
 
@@ -418,7 +442,7 @@ fun MainScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Media Player", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color(0xFF64B5F6))
+                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
@@ -436,7 +460,7 @@ fun MainScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Incoming Notifications", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.Notifications, contentDescription = null, tint = Color(0xFFFFB74D))
+                                Icon(Icons.Default.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
@@ -454,7 +478,7 @@ fun MainScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Live Progress & Activities", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.Animation, contentDescription = null, tint = Color(0xFF42A5F5))
+                                Icon(Icons.Default.Animation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
@@ -473,7 +497,7 @@ fun MainScreen(
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                 headlineContent = { Text("Per-App Notification Filter", fontWeight = FontWeight.SemiBold) },
                                 leadingContent = {
-                                    Icon(Icons.Default.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Default.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 },
                                 trailingContent = {
                                     OutlinedButton(
@@ -495,7 +519,7 @@ fun MainScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Screen Recording Indicator", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.Videocam, contentDescription = null, tint = Color(0xFFFF5252))
+                                Icon(Icons.Default.Videocam, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
