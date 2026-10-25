@@ -415,26 +415,15 @@ fun IslandOverlayRoot(
         }
     }
 
-    val targetBubbleSize = if (bubbleEmerged) settings.heightDp.dp else 0.dp
-    val targetGap = if (bubbleEmerged) 8.dp else (-8).dp
+    // Secondary circle island only moves on the X axis, with fixed height equal to the main island
+    val bubbleSize = settings.heightDp.dp
+    val targetGap = if (bubbleEmerged) 8.dp else (-bubbleSize)
 
-    // Dedicated spring animation for secondary bubble gap with bounce on emergence:
+    // Dedicated spring animation for secondary bubble horizontal motion with bounce on emergence:
     val bubbleGapAnimSpec = if (bubbleEmerged) {
         spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.52f, // Juicy bounce overshoot past 8dp!
+            dampingRatio = 0.52f, // Juicy bounce overshoot past 8dp on the X axis!
             stiffness = 300f * speedSq
-        )
-    } else {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.85f,
-            stiffness = 420f * speedSq
-        )
-    }
-
-    val bubbleSizeAnimSpec = if (bubbleEmerged) {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.62f,
-            stiffness = 320f * speedSq
         )
     } else {
         spring<androidx.compose.ui.unit.Dp>(
@@ -458,7 +447,6 @@ fun IslandOverlayRoot(
     val animatedCard2Height by animateDpAsState(targetValue = targetCard2Height, animationSpec = sizeAnimSpecDp, label = "card2Height")
     val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = sizeAnimSpecFloat, label = "card2Alpha")
     val animatedCard2OffsetY by animateDpAsState(targetValue = targetCard2OffsetY, animationSpec = sizeAnimSpecDp, label = "card2OffsetY")
-    val animatedBubbleSize by animateDpAsState(targetValue = targetBubbleSize, animationSpec = bubbleSizeAnimSpec, label = "bubbleSize")
     val animatedGap by animateDpAsState(targetValue = targetGap, animationSpec = bubbleGapAnimSpec, label = "gap")
     val animatedTopOffset by animateDpAsState(targetValue = targetTopOffset, animationSpec = positionAnimSpecDp, label = "topOffset")
     val animatedCardSpacing by animateDpAsState(targetValue = targetCardSpacing, animationSpec = sizeAnimSpecDp, label = "cardSpacing")
@@ -828,21 +816,20 @@ fun IslandOverlayRoot(
             val compactPillAlpha = ((animatedCompactWidth - 6.dp) / 22.dp).coerceIn(0f, 1f)
 
             // 1. Auxiliary Circular Island Bubble: Placed strictly to the RIGHT of the compact pill
-            // Rendered underneath the main compact pill so it physically emerges from behind/inside the main pill
-            // with a spring bounce outward to the right, pushing the right parenthesis with it!
-            if (animatedBubbleSize > 2.dp && isDual) {
+            // Same height as the main island, simply only moving horizontally on the X axis with spring bounce!
+            if (isDual && !isCharging && (bubbleEmerged || animatedGap > -bubbleSize + 1.dp)) {
                 val compactMainHalf = (settings.widthDp * 0.74f).dp / 2f
                 val bubbleOffsetXPx = with(LocalDensity.current) {
-                    (compactMainHalf + animatedGap + (animatedBubbleSize / 2)).roundToPx()
+                    (compactMainHalf + animatedGap + (bubbleSize / 2)).roundToPx()
                 }
 
-                // Opacity matches the compact pill (emerges horizontally from the pill, not fading from the top!)
-                val bubbleAlpha = if (isExpanded) 0f else compactPillAlpha
+                // Opacity matches the compact pill on expand/collapse
+                val bubbleAlpha = if (isExpanded) compactPillAlpha else 1f
 
                 Box(
                     modifier = Modifier
                         .offset { IntOffset(x = bubbleOffsetXPx, y = 0) }
-                        .size(animatedBubbleSize)
+                        .size(bubbleSize)
                         .graphicsLayer { alpha = bubbleAlpha }
                         .shadow(
                             elevation = 8.dp * bubbleAlpha,
@@ -851,7 +838,7 @@ fun IslandOverlayRoot(
                         .clip(CircleShape)
                         .background(Color.Black)
                         .then(
-                            if (settings.showOutline && animatedBubbleSize > 8.dp && animatedGap > 1.dp) {
+                            if (settings.showOutline && animatedGap > 1.dp) {
                                 Modifier.border(
                                     width = settings.outlineThicknessDp.dp,
                                     color = secondaryOutlineColor,
@@ -868,7 +855,7 @@ fun IslandOverlayRoot(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (animatedBubbleSize >= (settings.heightDp * 0.45f).dp && animatedGap > 2.dp) {
+                    if (animatedGap > 2.dp) {
                         AuxiliaryBubbleContent(
                             priority = secondaryPriority,
                             media = currentMedia,
@@ -1047,15 +1034,16 @@ fun IslandOverlayRoot(
                 // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap + rightExtraShootDp.
                 // In dual mode, the secondary bubble is already emerging and bouncing to the right,
                 // so we only add a subtle extra shoot on the right side so it doesn't push the parenthesis too much!
-                val rightExtraShootDp = if (!isCharging && isDual && animatedBubbleSize > 2.dp) {
+                val isBubbleShowing = !isCharging && isDual && (bubbleEmerged || animatedGap > -bubbleSize + 2.dp)
+                val rightExtraShootDp = if (isBubbleShowing && animatedGap > 0.dp) {
                     extraShootDp * 0.25f
                 } else {
                     extraShootDp
                 }
 
-                val rightContentEdgeDp = if (!isCharging && isDual && animatedBubbleSize > 2.dp) {
+                val rightContentEdgeDp = if (isBubbleShowing) {
                     val compactMainHalf = (settings.widthDp * 0.74f).dp / 2f
-                    (compactMainHalf + animatedGap + animatedBubbleSize).coerceAtLeast(animatedCompactWidth / 2f)
+                    (compactMainHalf + animatedGap + bubbleSize).coerceAtLeast(animatedCompactWidth / 2f)
                 } else {
                     animatedCompactWidth / 2f
                 }
@@ -1094,7 +1082,7 @@ fun IslandOverlayRoot(
             if (!isExpanded && isOccupied) {
                 val compactHitWidth = if (isDual) {
                     val mainHalf = (settings.widthDp * 0.74f).dp / 2f
-                    (mainHalf + animatedGap + animatedBubbleSize + 24.dp) * 2f
+                    (mainHalf + animatedGap + bubbleSize + 24.dp) * 2f
                 } else {
                     animatedCompactWidth + 36.dp
                 }
