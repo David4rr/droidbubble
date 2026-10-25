@@ -399,12 +399,24 @@ fun IslandOverlayRoot(
     val bubbleGap = 6.dp
     val restingBubbleCenterX = compactMainHalf + bubbleGap + (bubbleSize / 2f)
 
+    val shouldEmergeSecondary = !isCharging && isDual && !isExpanded && isOccupied
+    var secondaryBubbleEmerged by remember { mutableStateOf(false) }
+    LaunchedEffect(shouldEmergeSecondary) {
+        if (shouldEmergeSecondary) {
+            // Subtle delay for a split fraction when the main island appears, so the main island establishes first
+            kotlinx.coroutines.delay((60L / speed).toLong().coerceAtLeast(10L))
+            secondaryBubbleEmerged = true
+        } else {
+            secondaryBubbleEmerged = false
+        }
+    }
+
     val targetBubbleOffsetX = when {
-        !isCharging && isDual && !isExpanded && isOccupied -> restingBubbleCenterX
+        secondaryBubbleEmerged && shouldEmergeSecondary -> restingBubbleCenterX
         else -> 0.dp
     }
 
-    val bubbleOffsetAnimSpec = if (isDual && !isExpanded) {
+    val bubbleOffsetAnimSpec = if (secondaryBubbleEmerged && shouldEmergeSecondary) {
         spring<Dp>(
             dampingRatio = 0.63f, // Slight bounce! Gently overshoots by ~3-4dp and bounces back
             stiffness = 320f * speedSq
