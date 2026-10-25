@@ -781,17 +781,27 @@ fun IslandOverlayRoot(
                 },
             contentAlignment = Alignment.TopCenter
         ) {
+            // Smoothly fade in over the first frames where it is barely a circle emerging from the punch hole,
+            // and smoothly fade out when shrinking back into the punch hole.
+            // Applies to both single and dual activities!
+            val circleThreshold = (settings.heightDp.dp * 0.95f).coerceAtLeast(30.dp)
+            val emergenceProgress = (animatedCompactWidth / circleThreshold).coerceIn(0f, 1f)
+            val compactPillAlpha = emergenceProgress * emergenceProgress * (3f - 2f * emergenceProgress)
+
             // 1. Auxiliary Circular Island Bubble: Placed on the LAYER BELOW (rendered first so main pill covers it!)
             // Fixed circular shape & size; emerges and retracts purely along the X axis from the middle of the punch hole (x = 0)
             if (isDual || animatedBubbleOffsetX > 1.dp) {
                 val bubbleOffsetXPx = with(LocalDensity.current) { animatedBubbleOffsetX.roundToPx() }
-                val bubbleAlpha = if (isExpanded) {
+                val baseBubbleAlpha = if (isExpanded) {
                     ((1f - expandProgress * 4f).coerceIn(0f, 1f))
                 } else if (!isOccupied) {
                     0f
                 } else {
                     1f
                 }
+                // When emerging from the punch hole, the secondary bubble also fades in with the main island
+                // so no opaque circle sits exposed at the punch hole during the initial frames!
+                val bubbleAlpha = baseBubbleAlpha * compactPillAlpha
 
                 if (bubbleAlpha > 0.01f) {
                     val emergedDistance = animatedBubbleOffsetX - (compactMainHalf - bubbleSize / 2f)
@@ -847,11 +857,6 @@ fun IslandOverlayRoot(
 
             // 2. Main Compact Pill: Rendered on top of the bubble (covers it when sliding near x = 0)
             if (animatedCompactWidth > 0.5.dp) {
-                // Smoothly fade in over the first frames where it is barely a circle emerging from the punch hole,
-                // and smoothly fade out when shrinking back into the punch hole.
-                val circleThreshold = (settings.heightDp.dp * 0.95f).coerceAtLeast(30.dp)
-                val emergenceProgress = (animatedCompactWidth / circleThreshold).coerceIn(0f, 1f)
-                val compactPillAlpha = emergenceProgress * emergenceProgress * (3f - 2f * emergenceProgress)
                 Box(
                     modifier = Modifier
                         .width(animatedCompactWidth)
@@ -868,7 +873,7 @@ fun IslandOverlayRoot(
                             if (settings.showOutline && animatedCompactWidth > 8.dp) {
                                 Modifier.border(
                                     width = settings.outlineThicknessDp.dp,
-                                    color = primaryOutlineColor,
+                                    color = primaryOutlineColor.copy(alpha = primaryOutlineColor.alpha * compactPillAlpha),
                                     shape = RoundedCornerShape(settings.cornerRadiusDp.dp)
                                 )
                             } else Modifier
@@ -1037,7 +1042,7 @@ fun IslandOverlayRoot(
                     color = bracketColor,
                     modifier = Modifier
                         .offset { IntOffset(x = leftCenterXPx, y = pYPx) }
-                        .graphicsLayer { alpha = parenthesisAlphaAnim }
+                        .graphicsLayer { alpha = parenthesisAlphaAnim * compactPillAlpha }
                 )
 
                 // Right Parenthesis `)`
@@ -1049,7 +1054,7 @@ fun IslandOverlayRoot(
                     color = bracketColor,
                     modifier = Modifier
                         .offset { IntOffset(x = rightCenterXPx, y = pYPx) }
-                        .graphicsLayer { alpha = parenthesisAlphaAnim }
+                        .graphicsLayer { alpha = parenthesisAlphaAnim * compactPillAlpha }
                 )
             }
 
