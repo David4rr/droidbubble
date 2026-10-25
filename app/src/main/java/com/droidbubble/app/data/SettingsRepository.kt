@@ -33,6 +33,7 @@ class SettingsRepository(private val context: Context) {
         val SHOW_NOTIFICATIONS = booleanPreferencesKey("show_notifications")
         val SHOW_LIVE_PROGRESS = booleanPreferencesKey("show_live_progress")
         val SHOW_SCREEN_RECORDING = booleanPreferencesKey("show_screen_recording")
+        val ANIMATION_SPEED = floatPreferencesKey("animation_speed")
         val BLOCKED_PACKAGES = stringSetPreferencesKey("blocked_packages")
         val RESTART_ON_BOOT = booleanPreferencesKey("restart_on_boot")
     }
@@ -54,6 +55,7 @@ class SettingsRepository(private val context: Context) {
             showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
             showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
             showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+            animationSpeed = preferences[PreferencesKeys.ANIMATION_SPEED] ?: 1.0f,
             blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
             restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true
         )
@@ -77,6 +79,7 @@ class SettingsRepository(private val context: Context) {
                 showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
                 showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
                 showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+                animationSpeed = preferences[PreferencesKeys.ANIMATION_SPEED] ?: 1.0f,
                 blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
                 restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true
             )
@@ -98,6 +101,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_NOTIFICATIONS] = newSettings.showNotifications
             preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] = newSettings.showLiveProgress
             preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] = newSettings.showScreenRecording
+            preferences[PreferencesKeys.ANIMATION_SPEED] = newSettings.animationSpeed
             preferences[PreferencesKeys.BLOCKED_PACKAGES] = newSettings.blockedPackages
             preferences[PreferencesKeys.RESTART_ON_BOOT] = newSettings.restartOnBoot
         }

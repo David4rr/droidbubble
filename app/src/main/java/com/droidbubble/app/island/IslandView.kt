@@ -250,22 +250,21 @@ fun IslandOverlayRoot(
         else -> defaultTaskOutline
     }
 
-    // Animation Specs:
-    // Charging: subtle bouncy curve (spring damping 0.68f)
-    // Expand: subtle bounce outwards (spring damping 0.74f)
-    // Minimise: the card minimises into the island pill midway through reaching its destination (190ms),
-    // while the island smoothly finishes gliding up to dock over the punch hole (350ms).
+    val speed = settings.animationSpeed.coerceIn(0.5f, 2.0f)
+    val speedSq = speed * speed
+
+    // Animation Specs (dynamically scaled by settings.animationSpeed):
     val sizeAnimSpecDp = when {
         isCharging -> spring<androidx.compose.ui.unit.Dp>(
             dampingRatio = 0.60f,
-            stiffness = 280f
+            stiffness = 280f * speedSq
         )
         isExpanded -> spring<androidx.compose.ui.unit.Dp>(
             dampingRatio = 0.74f,
-            stiffness = 380f
+            stiffness = 380f * speedSq
         )
         else -> tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = 190,
+            durationMillis = (190 / speed).roundToInt(),
             easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
         )
     }
@@ -273,14 +272,14 @@ fun IslandOverlayRoot(
     val sizeAnimSpecFloat = when {
         isCharging -> spring<Float>(
             dampingRatio = 0.60f,
-            stiffness = 280f
+            stiffness = 280f * speedSq
         )
         isExpanded -> spring<Float>(
             dampingRatio = 0.74f,
-            stiffness = 380f
+            stiffness = 380f * speedSq
         )
         else -> tween<Float>(
-            durationMillis = 190,
+            durationMillis = (190 / speed).roundToInt(),
             easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
         )
     }
@@ -288,12 +287,27 @@ fun IslandOverlayRoot(
     val positionAnimSpecDp = if (isExpanded) {
         spring<androidx.compose.ui.unit.Dp>(
             dampingRatio = 0.74f,
-            stiffness = 380f
+            stiffness = 380f * speedSq
         )
     } else {
         tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = 350,
+            durationMillis = (350 / speed).roundToInt(),
             easing = CubicBezierEasing(0.30f, 0.0f, 0.20f, 1.0f)
+        )
+    }
+
+    // Dedicated spec for compact pill width:
+    // When expanding: crisp spring shrinking into 0 width without overshoot
+    // When emerging back: subtle horizontal bounce of a few pixels (dampingRatio = 0.63f)!
+    val compactPillWidthAnimSpec = if (isExpanded) {
+        spring<androidx.compose.ui.unit.Dp>(
+            dampingRatio = 0.82f,
+            stiffness = 380f * speedSq
+        )
+    } else {
+        spring<androidx.compose.ui.unit.Dp>(
+            dampingRatio = 0.63f,
+            stiffness = 320f * speedSq
         )
     }
 
@@ -305,7 +319,7 @@ fun IslandOverlayRoot(
 
     val chargingContentAlpha by animateFloatAsState(
         targetValue = if (isCharging) 1f else 0f,
-        animationSpec = tween(durationMillis = 130, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = (130 / speed).roundToInt(), easing = FastOutSlowInEasing),
         label = "chargingContentAlpha"
     )
 
@@ -315,13 +329,13 @@ fun IslandOverlayRoot(
         targetValue = targetChargingFraction,
         animationSpec = if (isCharging) {
             tween(
-                durationMillis = 750,
-                delayMillis = 60,
+                durationMillis = (750 / speed).roundToInt(),
+                delayMillis = (60 / speed).roundToInt(),
                 easing = FastOutSlowInEasing
             )
         } else {
             tween(
-                durationMillis = 150,
+                durationMillis = (150 / speed).roundToInt(),
                 easing = FastOutLinearInEasing
             )
         },
@@ -361,12 +375,24 @@ fun IslandOverlayRoot(
         else -> settings.cornerRadiusDp.dp
     }
 
+    // Card 2 delayed appearance: starts a split frame after Card 1 when expanding
+    var card2Expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(isExpanded) {
+        if (isExpanded) {
+            kotlinx.coroutines.delay((45L / speed).toLong())
+            card2Expanded = true
+        } else {
+            card2Expanded = false
+        }
+    }
+
     val showSecondaryCard = !isCharging && activeCount >= 2 && secondaryPriority != null
-    val targetCard2Height = if (isExpanded && showSecondaryCard) {
+    val targetCard2Height = if (card2Expanded && showSecondaryCard) {
         val baseH = if (secondaryPriority == IslandPriority.SCREEN_RECORDING) 115.dp else 180.dp
         baseH * settings.expandedScale
     } else 0.dp
-    val targetCard2Alpha = if (isExpanded && showSecondaryCard) 1f else 0f
+    val targetCard2Alpha = if (card2Expanded && showSecondaryCard) 1f else 0f
+    val targetCard2OffsetY = if (card2Expanded && showSecondaryCard) 0.dp else (-14).dp
 
     val targetBubbleSize = when {
         !isCharging && isDual && !isExpanded -> settings.heightDp.dp
@@ -386,12 +412,13 @@ fun IslandOverlayRoot(
 
     val targetCardSpacing = if (isExpanded && showSecondaryCard) 10.dp else 0.dp
 
-    val animatedCompactWidth by animateDpAsState(targetValue = targetCompactWidth, animationSpec = sizeAnimSpecDp, label = "compactWidth")
+    val animatedCompactWidth by animateDpAsState(targetValue = targetCompactWidth, animationSpec = compactPillWidthAnimSpec, label = "compactWidth")
     val animatedCard1Width by animateDpAsState(targetValue = targetCard1Width, animationSpec = sizeAnimSpecDp, label = "card1Width")
     val animatedCard1Height by animateDpAsState(targetValue = targetCard1Height, animationSpec = sizeAnimSpecDp, label = "card1Height")
     val animatedCornerRadius by animateDpAsState(targetValue = targetCornerRadius, animationSpec = sizeAnimSpecDp, label = "cornerRadius")
     val animatedCard2Height by animateDpAsState(targetValue = targetCard2Height, animationSpec = sizeAnimSpecDp, label = "card2Height")
     val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = sizeAnimSpecFloat, label = "card2Alpha")
+    val animatedCard2OffsetY by animateDpAsState(targetValue = targetCard2OffsetY, animationSpec = sizeAnimSpecDp, label = "card2OffsetY")
     val animatedBubbleSize by animateDpAsState(targetValue = targetBubbleSize, animationSpec = sizeAnimSpecDp, label = "bubbleSize")
     val animatedGap by animateDpAsState(targetValue = targetGap, animationSpec = sizeAnimSpecDp, label = "gap")
     val animatedTopOffset by animateDpAsState(targetValue = targetTopOffset, animationSpec = positionAnimSpecDp, label = "topOffset")
@@ -404,12 +431,12 @@ fun IslandOverlayRoot(
 
     val animatedCard1OffsetX by animateFloatAsState(
         targetValue = card1OffsetX,
-        animationSpec = spring(dampingRatio = 0.76f, stiffness = 420f),
+        animationSpec = spring(dampingRatio = 0.76f, stiffness = 420f * speedSq),
         label = "card1OffsetX"
     )
     val animatedCard2OffsetX by animateFloatAsState(
         targetValue = card2OffsetX,
-        animationSpec = spring(dampingRatio = 0.76f, stiffness = 420f),
+        animationSpec = spring(dampingRatio = 0.76f, stiffness = 420f * speedSq),
         label = "card2OffsetX"
     )
 
@@ -616,7 +643,7 @@ fun IslandOverlayRoot(
                     if (animatedCard2Height > 1.dp) {
                         Box(
                             modifier = Modifier
-                                .offset { IntOffset(animatedCard2OffsetX.roundToInt(), 0) }
+                                .offset { IntOffset(animatedCard2OffsetX.roundToInt(), animatedCard2OffsetY.roundToPx()) }
                                 .width(animatedCard1Width)
                                 .height(animatedCard2Height)
                                 .clipToBounds()
@@ -733,13 +760,16 @@ fun IslandOverlayRoot(
         ) {
             // Main Compact Pill (Shrinks to 0 width on expand, expands from 0 width on collapse)
             if (animatedCompactWidth > 1.dp) {
+                // Smoothly fade away over the last few frames before vanishing into the punch hole, and fade in on emergence
+                val compactPillAlpha = ((animatedCompactWidth - 6.dp) / 22.dp).coerceIn(0f, 1f)
                 Box(
                     modifier = Modifier
                         .width(animatedCompactWidth)
                         .height(settings.heightDp.dp)
                         .clipToBounds()
+                        .graphicsLayer { alpha = compactPillAlpha }
                         .shadow(
-                            elevation = if (isOccupied) 8.dp else 0.dp,
+                            elevation = (if (isOccupied) 8.dp else 0.dp) * compactPillAlpha,
                             shape = RoundedCornerShape(settings.cornerRadiusDp.dp)
                         )
                         .clip(RoundedCornerShape(settings.cornerRadiusDp.dp))
@@ -955,7 +985,7 @@ fun IslandOverlayRoot(
                     (rightContentEdgeDp + parenthesisGap + tipOffsetFromCenter).roundToPx()
                 }
 
-                val bracketColor = Color.White.copy(alpha = 0.70f)
+                val bracketColor = Color.Black
 
                 // Left Parenthesis `(`
                 ParenthesisBracket(

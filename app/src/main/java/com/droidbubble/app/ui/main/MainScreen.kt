@@ -310,7 +310,7 @@ fun MainScreen(
                         )
                     }
 
-                    SettingsCardItem(position = GroupPosition.BOTTOM) {
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         SliderSettingItem(
                             label = "Expanded Card Scale",
                             value = settings.expandedScale,
@@ -318,6 +318,17 @@ fun MainScreen(
                             valueRange = 0.8f..1.3f,
                             steps = 5,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(expandedScale = (it * 10).roundToInt() / 10f) } }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM) {
+                        SliderSettingItem(
+                            label = "Animation Speed",
+                            value = settings.animationSpeed,
+                            unit = "x",
+                            valueRange = 0.5f..2.0f,
+                            steps = 14,
+                            onValueChange = { viewModel.updateSettings { s -> s.copy(animationSpeed = (it * 10).roundToInt() / 10f) } }
                         )
                     }
                 }

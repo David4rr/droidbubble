@@ -16,6 +16,7 @@ data class IslandSettings(
     val showNotifications: Boolean = false,
     val showLiveProgress: Boolean = true,
     val showScreenRecording: Boolean = true,
+    val animationSpeed: Float = 1.0f,
     val blockedPackages: Set<String> = emptySet(),
     val restartOnBoot: Boolean = true
 )
