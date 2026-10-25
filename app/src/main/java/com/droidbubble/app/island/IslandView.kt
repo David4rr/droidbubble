@@ -10,6 +10,7 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -444,6 +445,36 @@ fun IslandOverlayRoot(
         if (!isExpanded) {
             card1OffsetX = 0f
             card2OffsetX = 0f
+        }
+    }
+
+    // Parentheses Accent Shoot Animation:
+    // When the minimised island emerges and does the bounce, the parentheses shoot out just a few pixels extra and spring back to normal!
+    val parenthesisExtraShoot = remember { Animatable(0f) }
+    var wasExpanded by remember { mutableStateOf(isExpanded) }
+    var wasOccupied by remember { mutableStateOf(isOccupied) }
+
+    LaunchedEffect(isExpanded, isOccupied) {
+        val justMinimised = wasExpanded && !isExpanded
+        val justAppeared = !wasOccupied && isOccupied && !isExpanded
+        wasExpanded = isExpanded
+        wasOccupied = isOccupied
+
+        if (justMinimised || justAppeared) {
+            parenthesisExtraShoot.snapTo(0f)
+            // Wait for minimised island pill to expand close to full width (~105ms at 1x speed), entering its bounce
+            kotlinx.coroutines.delay((105L / speed).toLong())
+            // Shoot outward extra with spring physics and settle back to normal (0.dp extra)
+            parenthesisExtraShoot.animateTo(
+                targetValue = 0f,
+                initialVelocity = 220f * speed,
+                animationSpec = spring(
+                    dampingRatio = 0.60f,
+                    stiffness = 320f * speedSq
+                )
+            )
+        } else if (isExpanded || !isOccupied) {
+            parenthesisExtraShoot.snapTo(0f)
         }
     }
 
@@ -966,15 +997,17 @@ fun IslandOverlayRoot(
                 val pYPx = with(density) { ((settings.heightDp.dp - parenthesisHeight) / 2f).roundToPx() }
                 val tipOffsetFromCenter = (parenthesisWidth - parenthesisStroke) / 2f
 
+                val extraShootDp = parenthesisExtraShoot.value.dp
+
                 // Left parenthesis `(`: tips facing right are at centerX + tipOffsetFromCenter.
-                // We want tips to sit exactly at islandLeft - parenthesisGap.
+                // We want tips to sit exactly at islandLeft - parenthesisGap - extraShootDp.
                 val islandLeftDp = -animatedCompactWidth / 2f
                 val leftCenterXPx = with(density) {
-                    (islandLeftDp - parenthesisGap - tipOffsetFromCenter).roundToPx()
+                    (islandLeftDp - parenthesisGap - extraShootDp - tipOffsetFromCenter).roundToPx()
                 }
 
                 // Right parenthesis `)`: tips facing left are at centerX - tipOffsetFromCenter.
-                // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap.
+                // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap + extraShootDp.
                 val rightContentEdgeDp = if (!isCharging && isDual && animatedBubbleSize > 2.dp) {
                     val compactMainHalf = (settings.widthDp * 0.74f).dp / 2f
                     (compactMainHalf + animatedGap + animatedBubbleSize).coerceAtLeast(animatedCompactWidth / 2f)
@@ -982,7 +1015,7 @@ fun IslandOverlayRoot(
                     animatedCompactWidth / 2f
                 }
                 val rightCenterXPx = with(density) {
-                    (rightContentEdgeDp + parenthesisGap + tipOffsetFromCenter).roundToPx()
+                    (rightContentEdgeDp + parenthesisGap + extraShootDp + tipOffsetFromCenter).roundToPx()
                 }
 
                 val bracketColor = Color.Black
