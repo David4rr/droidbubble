@@ -1,12 +1,17 @@
 package com.droidbubble.app.island
 
+import android.app.ActivityOptions
 import android.app.PendingIntent
+import android.content.Intent
 import android.graphics.Bitmap
+import android.os.Build
+import android.util.Log
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -20,6 +25,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -36,6 +42,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,18 +52,28 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -87,14 +104,19 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -107,6 +129,46 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+fun extractMediaAccentColor(bitmap: Bitmap?): Color {
+    if (bitmap == null) return Color.Transparent
+    return try {
+        var redSum = 0L
+        var greenSum = 0L
+        var blueSum = 0L
+        var count = 0L
+
+        val stepX = (bitmap.width / 24).coerceAtLeast(1)
+        val stepY = (bitmap.height / 24).coerceAtLeast(1)
+
+        for (x in 0 until bitmap.width step stepX) {
+            for (y in 0 until bitmap.height step stepY) {
+                val pixel = bitmap.getPixel(x, y)
+                val a = (pixel shr 24) and 0xff
+                if (a > 60) {
+                    val r = (pixel shr 16) and 0xff
+                    val g = (pixel shr 8) and 0xff
+                    val b = pixel and 0xff
+                    redSum += r
+                    greenSum += g
+                    blueSum += b
+                    count++
+                }
+            }
+        }
+
+        if (count > 0L) {
+            val avgR = (redSum / count).toInt().coerceIn(0, 255)
+            val avgG = (greenSum / count).toInt().coerceIn(0, 255)
+            val avgB = (blueSum / count).toInt().coerceIn(0, 255)
+            Color(avgR, avgG, avgB)
+        } else {
+            Color.Transparent
+        }
+    } catch (_: Exception) {
+        Color.Transparent
+    }
+}
+
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun IslandOverlayRoot(
@@ -118,24 +180,28 @@ fun IslandOverlayRoot(
     val media by IslandStateManager.activeMedia.collectAsState()
     val notification by IslandStateManager.activeNotification.collectAsState()
     val recording by IslandStateManager.screenRecordingState.collectAsState()
+    val charging by IslandStateManager.activeCharging.collectAsState()
 
     val view = LocalView.current
 
     val currentMedia = media
     val currentNotif = notification
+    val mediaArt = currentMedia?.albumArt ?: currentMedia?.appIcon
+    val mediaAccentColor = remember(mediaArt) { extractMediaAccentColor(mediaArt) }
     val isRecording = recording.isRecording
     val isProgress = currentNotif?.hasProgress == true
     val isNotification = currentNotif != null && !isProgress
     val isMedia = currentMedia != null && (currentMedia.isPlaying || currentMedia.title.isNotBlank())
+    val isCharging = charging != null
 
-    val isOccupied = isRecording || isNotification || isMedia || isProgress
+    val isOccupied = isRecording || isNotification || isMedia || isProgress || isCharging
 
-    // Determine dual-island state (when 2+ activities occupy the island)
+    // Determine dual-island state (when 2+ activities occupy the island, temporarily overshadowed by charging)
     val activeCount = (if (isRecording) 1 else 0) +
             (if (isNotification) 1 else 0) +
             (if (isMedia) 1 else 0) +
             (if (isProgress) 1 else 0)
-    val isDual = activeCount >= 2
+    val isDual = !isCharging && activeCount >= 2
 
     // Primary & Secondary activity assignment
     val primaryPriority: IslandPriority = when {
@@ -157,43 +223,87 @@ fun IslandOverlayRoot(
     }
 
     // Animation Specs:
+    // Charging: subtle bouncy curve (spring damping 0.68f)
     // Expand: subtle bounce outwards (spring damping 0.74f)
-    // Minimise: smooth monotonic ease-in-and-out curve that minimises smoothly before reaching the camera cutout
-    val currentAnimSpecDp = if (isExpanded) {
+    // Minimise: the card minimises into the island pill midway through reaching its destination (190ms),
+    // while the island smoothly finishes gliding up to dock over the punch hole (350ms).
+    val sizeAnimSpecDp = when {
+        isCharging -> spring<androidx.compose.ui.unit.Dp>(
+            dampingRatio = 0.60f,
+            stiffness = 280f
+        )
+        isExpanded -> spring<androidx.compose.ui.unit.Dp>(
+            dampingRatio = 0.74f,
+            stiffness = 380f
+        )
+        else -> tween<androidx.compose.ui.unit.Dp>(
+            durationMillis = 190,
+            easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
+        )
+    }
+
+    val sizeAnimSpecFloat = when {
+        isCharging -> spring<Float>(
+            dampingRatio = 0.60f,
+            stiffness = 280f
+        )
+        isExpanded -> spring<Float>(
+            dampingRatio = 0.74f,
+            stiffness = 380f
+        )
+        else -> tween<Float>(
+            durationMillis = 190,
+            easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
+        )
+    }
+
+    val positionAnimSpecDp = if (isExpanded) {
         spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.74f, // subtle organic overshoot bounce on expand
+            dampingRatio = 0.74f,
             stiffness = 380f
         )
     } else {
         tween<androidx.compose.ui.unit.Dp>(
             durationMillis = 350,
-            easing = FastOutSlowInEasing // completely smooth, monotonic, zero glitching
-        )
-    }
-
-    val currentAnimSpecFloat = if (isExpanded) {
-        spring<Float>(
-            dampingRatio = 0.74f,
-            stiffness = 380f
-        )
-    } else {
-        tween<Float>(
-            durationMillis = 350,
-            easing = FastOutSlowInEasing
+            easing = CubicBezierEasing(0.30f, 0.0f, 0.20f, 1.0f)
         )
     }
 
     val expandProgress by animateFloatAsState(
-        targetValue = if (isExpanded) 1f else 0f,
-        animationSpec = currentAnimSpecFloat,
+        targetValue = if (isExpanded && !isCharging) 1f else 0f,
+        animationSpec = sizeAnimSpecFloat,
         label = "expandProgress"
     )
 
-    // Target dimensions:
-    // When minimised, height is STRICTLY fixed at settings.heightDp.dp (never changes or mixes up!)
-    // Resizing is purely horizontal: width shrinks to 0 when idle, expands to widthDp with 1 action,
-    // or splits into (widthDp * 0.74) + circular auxiliary bubble in dual mode.
+    val chargingContentAlpha by animateFloatAsState(
+        targetValue = if (isCharging) 1f else 0f,
+        animationSpec = tween(durationMillis = 130, easing = FastOutSlowInEasing),
+        label = "chargingContentAlpha"
+    )
+
+    val chargingPct = charging?.percentage ?: 0
+    val targetChargingFraction = if (isCharging) (chargingPct.toFloat() / 100f).coerceIn(0f, 1f) else 0f
+    val animatedChargingProgress by animateFloatAsState(
+        targetValue = targetChargingFraction,
+        animationSpec = if (isCharging) {
+            tween(
+                durationMillis = 750,
+                delayMillis = 60,
+                easing = FastOutSlowInEasing
+            )
+        } else {
+            tween(
+                durationMillis = 150,
+                easing = FastOutLinearInEasing
+            )
+        },
+        label = "chargingProgress"
+    )
+
+    val chargingIslandWidth = (settings.widthDp + 20).dp.coerceAtLeast(140.dp)
+    // When minimised, height is STRICTLY fixed at settings.heightDp.dp.
     val targetMainWidth = when {
+        isCharging -> chargingIslandWidth
         isExpanded -> (340.dp * settings.expandedScale)
         !isOccupied -> 0.dp // Disappears into the middle horizontally!
         isDual -> (settings.widthDp * 0.74f).dp // Main pill centered around punch-hole in dual mode
@@ -201,46 +311,47 @@ fun IslandOverlayRoot(
     }
 
     val targetHeight = when {
+        isCharging -> settings.heightDp.dp
         isExpanded -> (195.dp * settings.expandedScale)
         else -> settings.heightDp.dp
     }
 
     val targetCornerRadius = when {
-        isExpanded -> 28.dp
+        isExpanded && !isCharging -> 28.dp
         else -> settings.cornerRadiusDp.dp
     }
 
-    val showSecondaryCard = activeCount >= 2 && secondaryPriority != null
+    val showSecondaryCard = !isCharging && activeCount >= 2 && secondaryPriority != null
     val targetCard2Height = if (isExpanded && showSecondaryCard) (180.dp * settings.expandedScale) else 0.dp
     val targetCard2Alpha = if (isExpanded && showSecondaryCard) 1f else 0f
 
     val targetBubbleSize = when {
-        isDual && !isExpanded -> settings.heightDp.dp
+        !isCharging && isDual && !isExpanded -> settings.heightDp.dp
         else -> 0.dp
     }
 
     val targetGap = when {
-        isDual && !isExpanded -> 8.dp
+        !isCharging && isDual && !isExpanded -> 8.dp
         else -> 0.dp
     }
 
-    val targetTopOffset = if (isExpanded) {
+    val targetTopOffset = if (isExpanded && !isCharging) {
         (settings.topOffsetDp + 52).dp // Sits way below initial position (comfortably below status bar) when expanded!
     } else {
-        settings.topOffsetDp.dp // Docks right over the punch hole when minimised
+        settings.topOffsetDp.dp // Docks right over the punch hole when minimised or charging
     }
 
     val targetCardSpacing = if (isExpanded && showSecondaryCard) 10.dp else 0.dp
 
-    val animatedMainWidth by animateDpAsState(targetValue = targetMainWidth, animationSpec = currentAnimSpecDp, label = "mainWidth")
-    val animatedHeight by animateDpAsState(targetValue = targetHeight, animationSpec = currentAnimSpecDp, label = "height")
-    val animatedCornerRadius by animateDpAsState(targetValue = targetCornerRadius, animationSpec = currentAnimSpecDp, label = "cornerRadius")
-    val animatedCard2Height by animateDpAsState(targetValue = targetCard2Height, animationSpec = currentAnimSpecDp, label = "card2Height")
-    val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = currentAnimSpecFloat, label = "card2Alpha")
-    val animatedBubbleSize by animateDpAsState(targetValue = targetBubbleSize, animationSpec = currentAnimSpecDp, label = "bubbleSize")
-    val animatedGap by animateDpAsState(targetValue = targetGap, animationSpec = currentAnimSpecDp, label = "gap")
-    val animatedTopOffset by animateDpAsState(targetValue = targetTopOffset, animationSpec = currentAnimSpecDp, label = "topOffset")
-    val animatedCardSpacing by animateDpAsState(targetValue = targetCardSpacing, animationSpec = currentAnimSpecDp, label = "cardSpacing")
+    val animatedMainWidth by animateDpAsState(targetValue = targetMainWidth, animationSpec = sizeAnimSpecDp, label = "mainWidth")
+    val animatedHeight by animateDpAsState(targetValue = targetHeight, animationSpec = sizeAnimSpecDp, label = "height")
+    val animatedCornerRadius by animateDpAsState(targetValue = targetCornerRadius, animationSpec = sizeAnimSpecDp, label = "cornerRadius")
+    val animatedCard2Height by animateDpAsState(targetValue = targetCard2Height, animationSpec = sizeAnimSpecDp, label = "card2Height")
+    val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = sizeAnimSpecFloat, label = "card2Alpha")
+    val animatedBubbleSize by animateDpAsState(targetValue = targetBubbleSize, animationSpec = sizeAnimSpecDp, label = "bubbleSize")
+    val animatedGap by animateDpAsState(targetValue = targetGap, animationSpec = sizeAnimSpecDp, label = "gap")
+    val animatedTopOffset by animateDpAsState(targetValue = targetTopOffset, animationSpec = positionAnimSpecDp, label = "topOffset")
+    val animatedCardSpacing by animateDpAsState(targetValue = targetCardSpacing, animationSpec = sizeAnimSpecDp, label = "cardSpacing")
 
     // Clamped height: NEVER bounces less than base height when collapsing from expanded!
     val minPillHeight = settings.heightDp.dp
@@ -264,6 +375,20 @@ fun IslandOverlayRoot(
         if (!isExpanded) {
             card1OffsetX = 0f
             card2OffsetX = 0f
+        }
+    }
+
+    LaunchedEffect(charging?.timestamp) {
+        if (charging != null && settings.hapticsEnabled) {
+            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        }
+    }
+
+    LaunchedEffect(isExpanded, isOccupied, primaryPriority) {
+        if (isExpanded) {
+            if (!isOccupied || primaryPriority == IslandPriority.IDLE) {
+                IslandStateManager.collapse()
+            }
         }
     }
 
@@ -298,7 +423,7 @@ fun IslandOverlayRoot(
             modifier = Modifier
                 .offset {
                     IntOffset(
-                        x = settings.horizontalOffsetDp.dp.roundToPx(),
+                        x = 0,
                         y = animatedTopOffset.roundToPx()
                     )
                 },
@@ -360,7 +485,10 @@ fun IslandOverlayRoot(
                                                 IslandPriority.MEDIA -> {
                                                     if (abs(card1OffsetX) > threshold) {
                                                         triggerHaptic()
-                                                        IslandStateManager.onPlayPause?.invoke()
+                                                        IslandStateManager.dismissMedia()
+                                                        if (activeCount <= 1) {
+                                                            IslandStateManager.collapse()
+                                                        }
                                                     }
                                                 }
                                                 IslandPriority.POP_NOTIFICATION -> {
@@ -399,6 +527,23 @@ fun IslandOverlayRoot(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
+                    // Subtle ambient gradient background ONLY in the expanded media player card
+                    if (isExpanded && primaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            mediaAccentColor.copy(alpha = 0.35f * expandProgress),
+                                            mediaAccentColor.copy(alpha = 0.12f * expandProgress),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+                    }
+
                     // Smooth crossfade:
                     // On expand: expanded controls fade in after the card expands
                     // On minimise: expanded controls fade out early without squishing, and compact elements fade in as pill docks
@@ -414,8 +559,84 @@ fun IslandOverlayRoot(
                         (1f - (expandProgress * 1.8f)).coerceIn(0f, 1f)
                     }
 
-                    // 1. Compact Content: strictly clear 48dp center over punch-hole
-                    if (compactAlpha > 0.01f && animatedMainWidth > 24.dp) {
+                    // Background darker green progress bar for charging status:
+                    // Glides from left to relative battery percentage, then fades away when island collapses
+                    if (isCharging || chargingContentAlpha > 0.01f) {
+                        // Subtle ultra-dark green base track
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = chargingContentAlpha }
+                                .background(Color(0xFF04190B))
+                        )
+
+                        // Filled darker green progress bar
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(fraction = animatedChargingProgress.coerceIn(0.001f, 1f))
+                                .align(Alignment.CenterStart)
+                                .graphicsLayer { alpha = chargingContentAlpha }
+                                .background(
+                                    Brush.horizontalGradient(
+                                        colors = listOf(
+                                            Color(0xFF062B12),
+                                            Color(0xFF0D3D1B)
+                                        )
+                                    )
+                                )
+                        )
+                    }
+
+                    // 1. Compact Content or Charging Content: strictly clear 36dp center over punch-hole
+                    if (isCharging || chargingContentAlpha > 0.01f) {
+                        val wattage = charging?.wattage
+                        val chargingLabel = if (wattage != null && wattage >= 1.0) {
+                            "${wattage.roundToInt()}W"
+                        } else {
+                            "Charging"
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 14.dp)
+                                .graphicsLayer { alpha = chargingContentAlpha },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left: Wattage (e.g. "33W") or "Charging" to save extreme space
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = chargingLabel,
+                                    color = Color(0xFF30D158),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            // Center: 36dp deadzone strictly over camera cutout
+                            Spacer(modifier = Modifier.width(36.dp))
+
+                            // Right: Current battery percentage in green
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Text(
+                                    text = "${charging?.percentage ?: 100}%",
+                                    color = Color(0xFF30D158),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    } else if (compactAlpha > 0.01f && animatedMainWidth > 24.dp) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -433,7 +654,7 @@ fun IslandOverlayRoot(
                     }
 
                     // 2. Expanded Card 1 Content (e.g. Media Player or Primary Notification)
-                    if (expandedAlpha > 0.01f) {
+                    if (!isCharging && expandedAlpha > 0.01f) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -496,7 +717,7 @@ fun IslandOverlayRoot(
                                                     IslandPriority.MEDIA -> {
                                                         if (abs(card2OffsetX) > threshold) {
                                                             triggerHaptic()
-                                                            IslandStateManager.onPlayPause?.invoke()
+                                                            IslandStateManager.dismissMedia()
                                                         }
                                                     }
                                                     IslandPriority.POP_NOTIFICATION -> {
@@ -532,6 +753,23 @@ fun IslandOverlayRoot(
                             )
                             .padding(20.dp)
                     ) {
+                        // Subtle ambient gradient background for secondary card if it's the media player
+                        if (isExpanded && secondaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                mediaAccentColor.copy(alpha = 0.35f * animatedCard2Alpha),
+                                                mediaAccentColor.copy(alpha = 0.12f * animatedCard2Alpha),
+                                                Color.Transparent
+                                            )
+                                        )
+                                    )
+                            )
+                        }
+
                         if (animatedCard2Alpha > 0.15f && secondaryPriority != null) {
                             ExpandedCardContent(
                                 priority = secondaryPriority,
@@ -598,7 +836,137 @@ fun IslandOverlayRoot(
                     }
                 }
             }
+
+            // Parentheses Accents: Neat parentheses-shaped brackets on each side of the island
+            // Shorter than the height of the island, smoothly positioning symmetrically around 1 or 2 activities, and neatly close to the edges.
+            val targetParenthesisAlpha = if (!isOccupied) 0f else ((1f - expandProgress * 3.5f).coerceIn(0f, 1f))
+            val parenthesisAlphaAnim by animateFloatAsState(
+                targetValue = targetParenthesisAlpha,
+                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+                label = "parenthesisAlpha"
+            )
+            if (parenthesisAlphaAnim > 0.01f && animatedMainWidth > 20.dp) {
+                val parenthesisHeight = (displayHeight * 0.50f).coerceIn(15.dp, 20.dp)
+                val parenthesisWidth = 4.5.dp
+                val parenthesisGap = 3.5.dp
+                val parenthesisStroke = 1.8.dp
+                val density = LocalDensity.current
+
+                val pYPx = with(density) { ((displayHeight - parenthesisHeight) / 2f).roundToPx() }
+                val tipOffsetFromCenter = (parenthesisWidth - parenthesisStroke) / 2f
+
+                // Left parenthesis `(`: tips facing right are at centerX + tipOffsetFromCenter.
+                // We want tips to sit exactly at islandLeft - parenthesisGap.
+                val islandLeftDp = -animatedMainWidth / 2f
+                val leftCenterXPx = with(density) {
+                    (islandLeftDp - parenthesisGap - tipOffsetFromCenter).roundToPx()
+                } + animatedCard1OffsetX.roundToInt()
+
+                // Right parenthesis `)`: tips facing left are at centerX - tipOffsetFromCenter.
+                // We want tips to sit exactly at rightContentEdgeDp + parenthesisGap.
+                val rightContentEdgeDp = if (!isCharging && isDual && animatedBubbleSize > 2.dp) {
+                    val compactMainHalf = (settings.widthDp * 0.74f).dp / 2f
+                    (compactMainHalf + animatedGap + animatedBubbleSize).coerceAtLeast(animatedMainWidth / 2f)
+                } else {
+                    animatedMainWidth / 2f
+                }
+                val rightCenterXPx = with(density) {
+                    (rightContentEdgeDp + parenthesisGap + tipOffsetFromCenter).roundToPx()
+                }
+
+                val bracketColor = Color.White.copy(alpha = 0.70f)
+
+                // Left Parenthesis `(`
+                ParenthesisBracket(
+                    isLeft = true,
+                    width = parenthesisWidth,
+                    height = parenthesisHeight,
+                    strokeWidth = parenthesisStroke,
+                    color = bracketColor,
+                    modifier = Modifier
+                        .offset { IntOffset(x = leftCenterXPx, y = pYPx) }
+                        .graphicsLayer { alpha = parenthesisAlphaAnim }
+                )
+
+                // Right Parenthesis `)`
+                ParenthesisBracket(
+                    isLeft = false,
+                    width = parenthesisWidth,
+                    height = parenthesisHeight,
+                    strokeWidth = parenthesisStroke,
+                    color = bracketColor,
+                    modifier = Modifier
+                        .offset { IntOffset(x = rightCenterXPx, y = pYPx) }
+                        .graphicsLayer { alpha = parenthesisAlphaAnim }
+                )
+            }
+
+            // Extended hit-box for compact mode: covers the pill + extends 36dp downwards into the safe zone below the status bar
+            if (!isExpanded && isOccupied) {
+                val compactHitWidth = if (isDual) {
+                    val mainHalf = (settings.widthDp * 0.74f).dp / 2f
+                    (mainHalf + animatedGap + animatedBubbleSize + 24.dp) * 2f
+                } else {
+                    animatedMainWidth + 36.dp
+                }
+                Box(
+                    modifier = Modifier
+                        .width(compactHitWidth)
+                        .height(displayHeight + 36.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            triggerHaptic()
+                            IslandStateManager.expand()
+                        }
+                )
+            }
         }
+    }
+}
+
+@Composable
+fun ParenthesisBracket(
+    isLeft: Boolean,
+    width: Dp,
+    height: Dp,
+    strokeWidth: Dp,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier.size(width, height)) {
+        val w = size.width
+        val h = size.height
+        val strokePx = strokeWidth.toPx()
+        val path = Path()
+
+        if (isLeft) {
+            // Left parenthesis `(`: curves outward to the left
+            path.moveTo(w - strokePx / 2f, strokePx / 2f)
+            path.cubicTo(
+                x1 = strokePx / 2f, y1 = h * 0.22f,
+                x2 = strokePx / 2f, y2 = h * 0.78f,
+                x3 = w - strokePx / 2f, y3 = h - strokePx / 2f
+            )
+        } else {
+            // Right parenthesis `)`: curves outward to the right
+            path.moveTo(strokePx / 2f, strokePx / 2f)
+            path.cubicTo(
+                x1 = w - strokePx / 2f, y1 = h * 0.22f,
+                x2 = w - strokePx / 2f, y2 = h * 0.78f,
+                x3 = strokePx / 2f, y3 = h - strokePx / 2f
+            )
+        }
+
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(
+                width = strokePx,
+                cap = StrokeCap.Round
+            )
+        )
     }
 }
 
@@ -663,10 +1031,11 @@ fun AuxiliaryBubbleContent(
             }
         }
         IslandPriority.MEDIA -> {
-            if (media?.albumArt != null) {
+            val displayArt = media?.albumArt ?: media?.appIcon
+            if (displayArt != null) {
                 Image(
-                    bitmap = media.albumArt.asImageBitmap(),
-                    contentDescription = "Album Art",
+                    bitmap = displayArt.asImageBitmap(),
+                    contentDescription = "Media Art",
                     modifier = Modifier
                         .size(18.dp)
                         .clip(CircleShape)
@@ -767,17 +1136,18 @@ fun CompactContent(
                 }
 
                 IslandPriority.MEDIA -> {
-                    if (media?.albumArt != null) {
+                    val displayArt = media?.albumArt ?: media?.appIcon
+                    if (displayArt != null) {
                         Image(
-                            bitmap = media.albumArt.asImageBitmap(),
-                            contentDescription = "Album Art",
+                            bitmap = displayArt.asImageBitmap(),
+                            contentDescription = "Media Art",
                             modifier = Modifier
                                 .size(20.dp)
                                 .clip(RoundedCornerShape(5.dp))
                         )
                     } else {
                         Icon(
-                            imageVector = Icons.Default.Radio,
+                            imageVector = Icons.Default.MusicNote,
                             contentDescription = null,
                             tint = Color(0xFFA1A1AA),
                             modifier = Modifier.size(18.dp)
@@ -886,6 +1256,9 @@ fun ExpandedCardContent(
             ExpandedMediaView(media, onCollapse)
         }
         IslandPriority.IDLE -> {
+            LaunchedEffect(Unit) {
+                onCollapse()
+            }
             ExpandedIdleView(onCollapse)
         }
     }
@@ -1090,6 +1463,49 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
 @Composable
 fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> Unit) {
     val context = LocalContext.current
+    var isReplying by remember { mutableStateOf(false) }
+    var replyText by remember { mutableStateOf("") }
+
+    val replyAction = remember(notification) {
+        notification?.actions?.firstOrNull { it.isReply || it.title.contains("Reply", ignoreCase = true) }
+    }
+
+    fun openNotification() {
+        IslandStateManager.setKeyboardFocused(false)
+        val pendingIntent = notification?.contentIntent
+        var launched = false
+        if (pendingIntent != null) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    val options = ActivityOptions.makeBasic().apply {
+                        pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                    }.toBundle()
+                    pendingIntent.send(context, 0, null, null, null, null, options)
+                } else {
+                    pendingIntent.send()
+                }
+                launched = true
+            } catch (e: Exception) {
+                Log.e("ExpandedNotification", "Failed to send contentIntent", e)
+            }
+        }
+        if (!launched && !notification?.packageName.isNullOrBlank()) {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(notification.packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+            }
+        }
+        onCollapse()
+    }
+
+    fun sendReply(text: String) {
+        if (text.isBlank() || notification == null) return
+        IslandStateManager.onSendReply?.invoke(notification.key, text.trim())
+        IslandStateManager.setKeyboardFocused(false)
+        IslandStateManager.dismissCurrentNotification()
+        onCollapse()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -1149,6 +1565,7 @@ fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> 
 
                 IconButton(
                     onClick = {
+                        IslandStateManager.setKeyboardFocused(false)
                         IslandStateManager.dismissCurrentNotification()
                         onCollapse()
                     },
@@ -1175,13 +1592,356 @@ fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> 
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        runCatching {
-                            notification?.contentIntent?.send()
-                            onCollapse()
+                    .clickable { openNotification() }
+            )
+        }
+
+        // Action Section: Either Inline Reply Row or Action Buttons
+        if (isReplying) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Smart reply choices chips
+                val smartChoices = remember(replyAction) {
+                    val choices = replyAction?.remoteInputChoices ?: emptyList()
+                    if (choices.isNotEmpty()) choices else listOf("OK", "Sure", "Thanks!")
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    smartChoices.take(3).forEach { choice ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF2C2C2E))
+                                .clickable { sendReply(choice) }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = choice,
+                                color = Color(0xFFE5E5EA),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
+                }
+
+                // Inline Reply Text Input Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(21.dp))
+                        .background(Color(0xFF212121))
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BasicTextField(
+                        value = replyText,
+                        onValueChange = { replyText = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) {
+                                    IslandStateManager.setKeyboardFocused(true)
+                                }
+                            },
+                        textStyle = TextStyle(
+                            color = Color.White,
+                            fontSize = 14.sp
+                        ),
+                        singleLine = true,
+                        cursorBrush = SolidColor(Color(0xFFE5E5EA)),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { sendReply(replyText) }),
+                        decorationBox = { innerTextField ->
+                            if (replyText.isEmpty()) {
+                                Text(
+                                    text = replyAction?.remoteInputLabel ?: "Type a reply...",
+                                    color = Color(0xFF71717A),
+                                    fontSize = 14.sp
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+
+                    IconButton(
+                        onClick = { sendReply(replyText) },
+                        enabled = replyText.isNotBlank(),
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Send Reply",
+                            tint = if (replyText.isNotBlank()) Color.White else Color(0xFF52525B),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            isReplying = false
+                            IslandStateManager.setKeyboardFocused(false)
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cancel",
+                            tint = Color(0xFF71717A),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        } else {
+            // Action Buttons: Taller, dynamically dividing available width equally, spaced by 4dp,
+            // with inner corners facing adjacent buttons being squarish
+            val actionItems = remember(notification, replyAction) {
+                val list = mutableListOf<NotificationActionItem>()
+                val notifActions = notification?.actions ?: emptyList()
+                notifActions.take(2).forEach { action ->
+                    val isThisReply = action == replyAction || action.isReply || action.title.contains("Reply", ignoreCase = true)
+                    list.add(
+                        NotificationActionItem(
+                            title = action.title,
+                            isPrimary = false,
+                            onClick = {
+                                if (isThisReply) {
+                                    isReplying = true
+                                    IslandStateManager.setKeyboardFocused(true)
+                                } else {
+                                    runCatching { action.actionIntent?.send() }
+                                    IslandStateManager.dismissCurrentNotification()
+                                    onCollapse()
+                                }
+                            }
+                        )
+                    )
+                }
+                list.add(
+                    NotificationActionItem(
+                        title = "Open",
+                        isPrimary = true,
+                        onClick = { openNotification() }
+                    )
+                )
+                list
+            }
+
+            val totalButtons = actionItems.size
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                actionItems.forEachIndexed { index, item ->
+                    val shape = when {
+                        totalButtons <= 1 -> RoundedCornerShape(14.dp)
+                        index == 0 -> RoundedCornerShape(
+                            topStart = 14.dp,
+                            bottomStart = 14.dp,
+                            topEnd = 4.dp,
+                            bottomEnd = 4.dp
+                        )
+                        index == totalButtons - 1 -> RoundedCornerShape(
+                            topStart = 4.dp,
+                            bottomStart = 4.dp,
+                            topEnd = 14.dp,
+                            bottomEnd = 14.dp
+                        )
+                        else -> RoundedCornerShape(4.dp)
+                    }
+
+                    FilledTonalButton(
+                        onClick = item.onClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp),
+                        shape = shape,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = if (item.isPrimary) Color(0xFFE5E5EA) else Color(0xFF2C2C2E),
+                            contentColor = if (item.isPrimary) Color.Black else Color(0xFFF4F4F5)
+                        )
+                    ) {
+                        Text(
+                            text = item.title,
+                            fontSize = 13.5.sp,
+                            fontWeight = if (item.isPrimary) FontWeight.Bold else FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class NotificationActionItem(
+    val title: String,
+    val isPrimary: Boolean,
+    val onClick: () -> Unit
+)
+
+@Composable
+fun ExpandedProgressView(notification: NotificationInfo?, onCollapse: () -> Unit) {
+    val context = LocalContext.current
+    val progressFraction = notification?.progressFraction ?: 0f
+    val isIndet = notification?.isIndeterminate == true
+    val percentageText = if (isIndet) "" else "${(progressFraction * 100).roundToInt()}%"
+
+    fun openProgressApp() {
+        runCatching {
+            if (notification?.contentIntent != null) {
+                notification.contentIntent.send()
+            } else if (!notification?.packageName.isNullOrBlank()) {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(notification.packageName)
+                if (launchIntent != null) {
+                    context.startActivity(launchIntent)
+                }
+            }
+        }
+        onCollapse()
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Top section: Header + Detail text + Progress bar
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (notification?.iconBitmap != null) {
+                    Image(
+                        bitmap = notification.iconBitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF212121)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = null,
+                            tint = Color(0xFFE5E5EA),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = notification?.title?.ifBlank { "Downloading" } ?: "Downloading",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                    )
+                    Text(
+                        text = notification?.appName ?: "",
+                        color = Color(0xFFA1A1AA),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (!isIndet) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF2C2C2E)
+                    ) {
+                        Text(
+                            text = percentageText,
+                            color = Color(0xFFE5E5EA),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.5.dp,
+                        color = Color(0xFFE5E5EA),
+                        trackColor = Color(0xFF2C2C2E)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                IconButton(
+                    onClick = onCollapse,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = Color(0xFF8E8E93),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = notification?.text ?: "In progress...",
+                color = Color(0xFFF4F4F5),
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Normal,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { openProgressApp() }
             )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Linear Progress Bar
+            if (isIndet) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = Color(0xFFE5E5EA),
+                    trackColor = Color(0xFF2C2C2E)
+                )
+            } else {
+                LinearProgressIndicator(
+                    progress = { progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = Color(0xFFE5E5EA),
+                    trackColor = Color(0xFF2C2C2E)
+                )
+            }
         }
 
         // Action Buttons: Taller, dynamically dividing available width equally, spaced by 4dp,
@@ -1196,8 +1956,6 @@ fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> 
                         isPrimary = false,
                         onClick = {
                             runCatching { action.actionIntent?.send() }
-                            IslandStateManager.dismissCurrentNotification()
-                            onCollapse()
                         }
                     )
                 )
@@ -1206,10 +1964,7 @@ fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> 
                 NotificationActionItem(
                     title = "Open",
                     isPrimary = true,
-                    onClick = {
-                        runCatching { notification?.contentIntent?.send() }
-                        onCollapse()
-                    }
+                    onClick = { openProgressApp() }
                 )
             )
             list
@@ -1258,172 +2013,6 @@ fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> 
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                }
-            }
-        }
-    }
-}
-
-private data class NotificationActionItem(
-    val title: String,
-    val isPrimary: Boolean,
-    val onClick: () -> Unit
-)
-
-@Composable
-fun ExpandedProgressView(notification: NotificationInfo?, onCollapse: () -> Unit) {
-    val progressFraction = notification?.progressFraction ?: 0f
-    val isIndet = notification?.isIndeterminate == true
-    val percentageText = if (isIndet) "" else "${(progressFraction * 100).roundToInt()}%"
-
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Header: App icon + Title & App Name + Percentage Badge
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (notification?.iconBitmap != null) {
-                Image(
-                    bitmap = notification.iconBitmap.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(9.dp))
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(Color(0xFF212121)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = null,
-                        tint = Color(0xFFE5E5EA),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = notification?.title?.ifBlank { "Downloading" } ?: "Downloading",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = notification?.appName ?: "",
-                    color = Color(0xFFA1A1AA),
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            if (!isIndet) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF2C2C2E)
-                ) {
-                    Text(
-                        text = percentageText,
-                        color = Color(0xFFE5E5EA),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            } else {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.5.dp,
-                    color = Color(0xFFE5E5EA),
-                    trackColor = Color(0xFF2C2C2E)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Linear Progress Bar
-        if (isIndet) {
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
-                color = Color(0xFFE5E5EA),
-                trackColor = Color(0xFF2C2C2E)
-            )
-        } else {
-            LinearProgressIndicator(
-                progress = { progressFraction },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
-                color = Color(0xFFE5E5EA),
-                trackColor = Color(0xFF2C2C2E)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Detail text (speed, size, etc.) and Action buttons
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = notification?.text ?: "In progress...",
-                color = Color(0xFFA1A1AA),
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                notification?.actions?.forEach { action ->
-                    FilledTonalButton(
-                        onClick = {
-                            runCatching { action.actionIntent?.send() }
-                        },
-                        modifier = Modifier.height(30.dp),
-                        shape = RoundedCornerShape(15.dp),
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = Color(0xFF2C2C2E),
-                            contentColor = Color(0xFFE5E5EA)
-                        )
-                    ) {
-                        Text(text = action.title, fontSize = 11.sp, maxLines = 1)
-                    }
-                }
-
-                FilledTonalButton(
-                    onClick = {
-                        runCatching { notification?.contentIntent?.send() }
-                        onCollapse()
-                    },
-                    modifier = Modifier.height(30.dp),
-                    shape = RoundedCornerShape(15.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = Color(0xFFE5E5EA),
-                        contentColor = Color.Black
-                    )
-                ) {
-                    Text(text = "Open", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }

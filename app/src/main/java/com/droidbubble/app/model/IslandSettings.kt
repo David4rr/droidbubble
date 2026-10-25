@@ -13,7 +13,8 @@ data class IslandSettings(
     val expandedScale: Float = 1.0f,
     val hapticsEnabled: Boolean = true,
     val showMedia: Boolean = true,
-    val showNotifications: Boolean = true,
+    val showNotifications: Boolean = false,
+    val showLiveProgress: Boolean = true,
     val showScreenRecording: Boolean = true,
     val blockedPackages: Set<String> = emptySet(),
     val restartOnBoot: Boolean = true

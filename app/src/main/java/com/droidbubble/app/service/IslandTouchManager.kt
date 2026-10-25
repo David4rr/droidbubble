@@ -34,12 +34,21 @@ class IslandTouchManager(private val overlayView: View) {
             isOccupied = occupied
             isExpanded = expanded
         }
-        overlayView.postInvalidate()
+        overlayView.post {
+            overlayView.requestLayout()
+            overlayView.invalidate()
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT_WATCH) {
+                overlayView.requestApplyInsets()
+            }
+        }
     }
 
     fun attach() {
-        if (isRegistered) return
+        if (isRegistered && overlayView.viewTreeObserver.isAlive) return
         try {
+            val vto = overlayView.viewTreeObserver
+            if (!vto.isAlive) return
+
             val listenerClass = Class.forName("android.view.ViewTreeObserver\$OnComputeInternalInsetsListener")
             val addMethod = ViewTreeObserver::class.java.getMethod("addOnComputeInternalInsetsListener", listenerClass)
 
@@ -52,7 +61,7 @@ class IslandTouchManager(private val overlayView: View) {
             }
 
             insetsListener = Proxy.newProxyInstance(listenerClass.classLoader, arrayOf(listenerClass), handler)
-            addMethod.invoke(overlayView.viewTreeObserver, insetsListener)
+            addMethod.invoke(vto, insetsListener)
             isRegistered = true
         } catch (e: Exception) {
             e.printStackTrace()

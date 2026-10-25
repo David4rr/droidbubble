@@ -17,8 +17,13 @@ data class MediaInfo(
 
 data class NotificationAction(
     val title: String,
-    val actionIntent: PendingIntent?
-)
+    val actionIntent: PendingIntent?,
+    val remoteInputKey: String? = null,
+    val remoteInputLabel: String? = null,
+    val remoteInputChoices: List<String> = emptyList()
+) {
+    val isReply: Boolean get() = remoteInputKey != null
+}
 
 data class NotificationInfo(
     val key: String,

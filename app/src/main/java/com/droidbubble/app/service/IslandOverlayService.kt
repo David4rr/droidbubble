@@ -11,9 +11,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import kotlin.math.roundToInt
 import android.provider.Settings
 import com.droidbubble.app.model.MediaInfo
 import com.droidbubble.app.model.NotificationInfo
@@ -60,6 +62,12 @@ class IslandOverlayService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.droidbubble.app.START_OVERLAY"
         const val ACTION_STOP = "com.droidbubble.app.STOP_OVERLAY"
+
+        private var serviceInstance: IslandOverlayService? = null
+
+        fun onAccessibilityServiceChanged(accessibilityService: IslandAccessibilityService?) {
+            serviceInstance?.handleAccessibilityServiceChanged(accessibilityService)
+        }
 
         fun start(context: Context) {
             val intent = Intent(context, IslandOverlayService::class.java).apply {
@@ -169,12 +177,41 @@ class IslandOverlayService : Service() {
                     IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
                     IslandStateManager.collapse()
                 }
+                "com.droidbubble.app.ACTION_SIMULATE_CHARGING" -> {
+                    val pct = intent.getIntExtra("percentage", 85)
+                    val wattage = if (intent.hasExtra("wattage")) {
+                        intent.getDoubleExtra("wattage", 33.0)
+                    } else {
+                        BatteryUtils.getChargingWattage(this@IslandOverlayService) ?: 33.0
+                    }
+                    IslandStateManager.triggerChargingEvent(pct, wattage)
+                }
+            }
+        }
+    }
+
+    private val powerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            if (action == Intent.ACTION_POWER_CONNECTED || action == "android.os.action.CHARGING") {
+                val ctx = context ?: return
+                val batteryIntent = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                val pct = if (level >= 0 && scale > 0) {
+                    ((level.toFloat() / scale.toFloat()) * 100).roundToInt().coerceIn(0, 100)
+                } else {
+                    100
+                }
+                val wattage = BatteryUtils.getChargingWattage(ctx, batteryIntent)
+                IslandStateManager.triggerChargingEvent(pct, wattage)
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        serviceInstance = this
         settingsRepository = SettingsRepository(this)
         lifecycleOwner.performRestore(null)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
@@ -184,6 +221,7 @@ class IslandOverlayService : Service() {
         createNotificationChannel()
 
         val filter = IntentFilter().apply {
+            addAction("com.droidbubble.app.ACTION_SIMULATE_CHARGING")
             addAction("com.droidbubble.app.ACTION_SIMULATE_MEDIA")
             addAction("com.droidbubble.app.ACTION_SIMULATE_NOTIFICATION")
             addAction("com.droidbubble.app.ACTION_SIMULATE_PROGRESS")
@@ -196,6 +234,16 @@ class IslandOverlayService : Service() {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(debugReceiver, filter)
+        }
+
+        val powerFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction("android.os.action.CHARGING")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(powerReceiver, powerFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(powerReceiver, powerFilter)
         }
     }
 
@@ -254,43 +302,27 @@ class IslandOverlayService : Service() {
         } catch (_: Exception) {}
     }
 
-    private fun updateTouchBounds(isExpanded: Boolean) {
-        val manager = touchManager ?: return
-        val density = resources.displayMetrics.density
-        val screenWidth = resources.displayMetrics.widthPixels
-        val centerX = screenWidth / 2 + (currentSettings.horizontalOffsetDp * density).toInt()
-        val top = (currentSettings.topOffsetDp * density).toInt()
-        val height = (currentSettings.heightDp * density).toInt()
 
-        val isOccupied = IslandStateManager.isOccupied
-        val isDual = (if (IslandStateManager.isRecordingActive) 1 else 0) +
-                (if (IslandStateManager.isNotificationActive) 1 else 0) +
-                (if (IslandStateManager.isMediaActive) 1 else 0) +
-                (if (IslandStateManager.isProgressActive) 1 else 0) >= 2
 
-        val rects = mutableListOf<android.graphics.Rect>()
-        if (isDual) {
-            val mainHalf = ((currentSettings.widthDp * 0.74f / 2f) * density).toInt()
-            val pillRect = android.graphics.Rect(centerX - mainHalf - 14, top - 14, centerX + mainHalf + 14, top + height + 14)
-            val gapPx = (8 * density).toInt()
-            val bubbleSizePx = height
-            val bubbleLeft = centerX + mainHalf + gapPx
-            val bubbleRect = android.graphics.Rect(bubbleLeft - 14, top - 14, bubbleLeft + bubbleSizePx + 14, top + height + 14)
-            rects.add(pillRect)
-            rects.add(bubbleRect)
-        } else if (isOccupied) {
-            val halfW = ((currentSettings.widthDp / 2f) * density).toInt()
-            rects.add(android.graphics.Rect(centerX - halfW - 14, top - 14, centerX + halfW + 14, top + height + 14))
+    fun handleAccessibilityServiceChanged(accessibilityService: IslandAccessibilityService?) {
+        if (composeView != null) {
+            removeOverlay()
+            if (Settings.canDrawOverlays(this) && currentSettings.isEnabled) {
+                initOverlay()
+            }
         }
-
-        manager.updateCompactBounds(rects, isOccupied, isExpanded)
     }
 
     @OptIn(ExperimentalMaterial3ExpressiveApi::class)
     private fun initOverlay() {
         if (composeView != null) return
 
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val aService = IslandAccessibilityService.instance
+        windowManager = if (aService != null) {
+            aService.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        } else {
+            getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        }
 
         val density = resources.displayMetrics.density
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -298,21 +330,49 @@ class IslandOverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
-        val initialHeight = ((currentSettings.topOffsetDp + currentSettings.heightDp + 16) * density).toInt()
+        val isOccupied = IslandStateManager.isOccupied
+        val isCharging = IslandStateManager.isChargingActive
+        val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
+                (if (IslandStateManager.isNotificationActive) 1 else 0) +
+                (if (IslandStateManager.isMediaActive) 1 else 0) +
+                (if (IslandStateManager.isProgressActive) 1 else 0)
+        val isDual = !isCharging && activeCount >= 2
+
+        val totalWidthDp = if (isCharging) {
+            val chargingPillWidth = (currentSettings.widthDp + 20f).coerceAtLeast(140f)
+            chargingPillWidth + 44f
+        } else if (isDual) {
+            val mainHalf = (currentSettings.widthDp * 0.74f) / 2f
+            val rightEdge = mainHalf + 8f + currentSettings.heightDp + 22f
+            (rightEdge * 2f).coerceAtLeast(currentSettings.widthDp + 44f)
+        } else {
+            currentSettings.widthDp + 44f
+        }
+
+        val initialWidth = if (isOccupied) {
+            (totalWidthDp * density).toInt()
+        } else 1
+        val initialHeight = if (isOccupied) ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt() else 1
+        val initialFlags = if (isOccupied) flags else (flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+
+        val windowType = if (aService != null) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
 
         layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            initialWidth,
             initialHeight,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE,
-            flags,
+            windowType,
+            initialFlags,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = 0
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            x = if (isOccupied && !isCharging) (currentSettings.horizontalOffsetDp * density).toInt() else 0
             y = 0
             windowAnimations = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -323,7 +383,7 @@ class IslandOverlayService : Service() {
         }
         disableMoveAnimation(layoutParams!!)
 
-        val view = ComposeView(this).apply {
+        val view = ComposeView(aService ?: this).apply {
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(lifecycleOwner)
@@ -345,10 +405,6 @@ class IslandOverlayService : Service() {
         }
 
         composeView = view
-        val manager = IslandTouchManager(view)
-        touchManager = manager
-        manager.attach()
-        updateTouchBounds(IslandStateManager.isExpanded.value)
 
         try {
             windowManager?.addView(view, layoutParams)
@@ -362,14 +418,31 @@ class IslandOverlayService : Service() {
                 IslandStateManager.isExpanded,
                 IslandStateManager.activeMedia,
                 IslandStateManager.activeNotification,
-                IslandStateManager.screenRecordingState
-            ) { expanded, media, notif, rec ->
-                val activeCount = (if (rec.isRecording) 1 else 0) +
-                        (if (notif != null) 1 else 0) +
-                        (if (media != null && (media.isPlaying || media.title.isNotBlank())) 1 else 0)
-                expanded to activeCount
-            }.collectLatest { (expanded, _) ->
+                IslandStateManager.screenRecordingState,
+                IslandStateManager.activeCharging
+            ) { expanded, media, notif, rec, charging ->
+                Triple(
+                    expanded,
+                    charging != null,
+                    (rec.isRecording || notif != null || (media != null && media.title.isNotBlank()))
+                )
+            }.collectLatest { (expanded, _, _) ->
                 updateWindowState(expanded)
+            }
+        }
+
+        // Listen for keyboard focus state to enable soft keyboard for inline replies
+        serviceScope.launch {
+            IslandStateManager.isKeyboardFocused.collectLatest { focused ->
+                val view = composeView ?: return@collectLatest
+                val params = layoutParams ?: return@collectLatest
+                if (focused) {
+                    params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+                } else {
+                    params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                }
+                disableMoveAnimation(params)
+                runCatching { windowManager?.updateViewLayout(view, params) }
             }
         }
 
@@ -401,26 +474,42 @@ class IslandOverlayService : Service() {
             collapseJob?.cancel()
             isCollapsing = false
             wasExpanded = true
-            updateTouchBounds(true)
             // Full screen touch area to allow tapping outside to dismiss
             params.width = WindowManager.LayoutParams.MATCH_PARENT
             params.height = WindowManager.LayoutParams.MATCH_PARENT
+            params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             params.x = 0
             params.y = 0
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             disableMoveAnimation(params)
             runCatching { windowManager?.updateViewLayout(view, params) }
         } else {
+            val isCharging = IslandStateManager.isChargingActive
             val isOccupied = IslandStateManager.isOccupied
-            updateTouchBounds(false)
+            val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
+                    (if (IslandStateManager.isNotificationActive) 1 else 0) +
+                    (if (IslandStateManager.isMediaActive) 1 else 0) +
+                    (if (IslandStateManager.isProgressActive) 1 else 0)
+            val isDual = !isCharging && activeCount >= 2
+
+            val totalWidthDp = if (isCharging) {
+                val chargingPillWidth = (currentSettings.widthDp + 20f).coerceAtLeast(140f)
+                chargingPillWidth + 44f
+            } else if (isDual) {
+                val mainHalf = (currentSettings.widthDp * 0.74f) / 2f
+                val rightEdge = mainHalf + 8f + currentSettings.heightDp + 22f
+                (rightEdge * 2f).coerceAtLeast(currentSettings.widthDp + 44f)
+            } else {
+                currentSettings.widthDp + 44f
+            }
 
             fun applyCompactBounds() {
-                updateTouchBounds(false)
+                collapseJob?.cancel()
                 if (isOccupied) {
-                    // ALWAYS keep width MATCH_PARENT so the window NEVER shifts horizontally on screen!
-                    params.width = WindowManager.LayoutParams.MATCH_PARENT
-                    params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 16) * density).toInt()
-                    params.x = 0
+                    params.width = (totalWidthDp * density).toInt()
+                    params.x = (currentSettings.horizontalOffsetDp * density).toInt()
+                    params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt()
+                    params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                     params.y = 0
                     params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
                     disableMoveAnimation(params)
@@ -436,8 +525,10 @@ class IslandOverlayService : Service() {
                 }
             }
 
-            // If a collapse animation is currently in progress, do NOT interrupt or resize early!
-            if (isCollapsing) {
+            if (isCharging) {
+                isCollapsing = false
+                collapseJob?.cancel()
+            } else if (isCollapsing) {
                 return
             }
 
@@ -474,8 +565,6 @@ class IslandOverlayService : Service() {
     }
 
     private fun removeOverlay() {
-        touchManager?.detach()
-        touchManager = null
         composeView?.let { view ->
             try {
                 windowManager?.removeView(view)
@@ -488,7 +577,11 @@ class IslandOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (serviceInstance === this) {
+            serviceInstance = null
+        }
         runCatching { unregisterReceiver(debugReceiver) }
+        runCatching { unregisterReceiver(powerReceiver) }
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

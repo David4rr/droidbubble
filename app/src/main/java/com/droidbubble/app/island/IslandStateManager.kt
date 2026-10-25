@@ -18,6 +18,16 @@ object IslandStateManager {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var popInJob: Job? = null
+    private var chargingJob: Job? = null
+
+    data class ChargingInfo(
+        val percentage: Int,
+        val wattage: Double? = null,
+        val timestamp: Long = System.currentTimeMillis()
+    )
+
+    private val _activeCharging = MutableStateFlow<ChargingInfo?>(null)
+    val activeCharging: StateFlow<ChargingInfo?> = _activeCharging.asStateFlow()
 
     private val _activeMedia = MutableStateFlow<MediaInfo?>(null)
     val activeMedia: StateFlow<MediaInfo?> = _activeMedia.asStateFlow()
@@ -37,13 +47,24 @@ object IslandStateManager {
     private val _isPopInActive = MutableStateFlow(false)
     val isPopInActive: StateFlow<Boolean> = _isPopInActive.asStateFlow()
 
+    private val _isKeyboardFocused = MutableStateFlow(false)
+    val isKeyboardFocused: StateFlow<Boolean> = _isKeyboardFocused.asStateFlow()
+
+    fun setKeyboardFocused(focused: Boolean) {
+        _isKeyboardFocused.value = focused
+    }
+
     private var lastMediaPlayingTime = 0L
 
     // Callbacks for media transport controls
     var onPlayPause: (() -> Unit)? = null
+    var onPauseMedia: (() -> Unit)? = null
     var onSkipNext: (() -> Unit)? = null
     var onSkipPrevious: (() -> Unit)? = null
     var onSeekTo: ((Long) -> Unit)? = null
+
+    var dismissedMediaPackage: String? = null
+        private set
 
     // Callbacks for screen recording controls
     var onStopRecording: (() -> Unit)? = null
@@ -52,11 +73,14 @@ object IslandStateManager {
     // Callback to dismiss notification from listener
     var onDismissNotification: ((String) -> Unit)? = null
 
+    // Callback to send direct reply to notification
+    var onSendReply: ((key: String, replyText: String) -> Unit)? = null
+
     val isRecordingActive: Boolean
         get() = _screenRecordingState.value.isRecording
 
     val isNotificationActive: Boolean
-        get() = _activeNotification.value != null
+        get() = _activeNotification.value != null && _activeNotification.value?.hasProgress != true
 
     val isMediaActive: Boolean
         get() {
@@ -68,8 +92,11 @@ object IslandStateManager {
     val isProgressActive: Boolean
         get() = _activeNotification.value?.hasProgress == true
 
+    val isChargingActive: Boolean
+        get() = _activeCharging.value != null
+
     val isOccupied: Boolean
-        get() = isRecordingActive || isNotificationActive || isMediaActive
+        get() = isRecordingActive || isNotificationActive || isMediaActive || isChargingActive
 
     // Live priority determination
     val currentPriority: IslandPriority
@@ -88,16 +115,62 @@ object IslandStateManager {
     val activeExpandedPriority: IslandPriority
         get() = _expandedPriority.value ?: currentPriority
 
+    fun triggerChargingEvent(percentage: Int, wattage: Double? = null) {
+        chargingJob?.cancel()
+        _activeCharging.value = ChargingInfo(percentage.coerceIn(0, 100), wattage)
+        chargingJob = scope.launch {
+            delay(3000)
+            _activeCharging.value = null
+        }
+    }
+
     fun updateMedia(media: MediaInfo?) {
+        if (media != null && media.packageName == dismissedMediaPackage) {
+            if (media.isPlaying) {
+                // Playback resumed, un-dismiss!
+                dismissedMediaPackage = null
+            } else {
+                // Still dismissed by user swipe
+                _activeMedia.value = null
+                if (_isExpanded.value && (_expandedPriority.value == IslandPriority.MEDIA || !isOccupied)) {
+                    collapse()
+                }
+                return
+            }
+        }
         _activeMedia.value = media
+        if (media == null && _isExpanded.value && (_expandedPriority.value == IslandPriority.MEDIA || !isOccupied)) {
+            collapse()
+        }
         if (media?.isPlaying == true) {
             lastMediaPlayingTime = System.currentTimeMillis()
         }
     }
 
+    fun dismissMedia() {
+        val current = _activeMedia.value
+        dismissedMediaPackage = current?.packageName
+        onPauseMedia?.invoke()
+        _activeMedia.value = null
+        if (_isExpanded.value) {
+            collapse()
+        }
+    }
+
+    fun unDismissMedia(packageName: String? = null) {
+        if (packageName == null || dismissedMediaPackage == packageName) {
+            dismissedMediaPackage = null
+        }
+    }
+
     fun updateNotification(notification: NotificationInfo?) {
         _activeNotification.value = notification
-        if (notification != null) {
+        if (notification == null) {
+            // Navigation, download or live progress notification ended
+            if (_isExpanded.value) {
+                collapse()
+            }
+        } else {
             if (notification.hasProgress) {
                 // Live progress task: keep active continuously while downloading
                 _isPopInActive.value = true
@@ -124,11 +197,18 @@ object IslandStateManager {
         onDismissNotification?.invoke(notif.key)
         _activeNotification.value = null
         _isPopInActive.value = false
+        if (_isExpanded.value) {
+            collapse()
+        }
         return true
     }
 
     fun updateRecordingState(state: ScreenRecordingState) {
+        val wasRecording = _screenRecordingState.value.isRecording
         _screenRecordingState.value = state
+        if (wasRecording && !state.isRecording && _isExpanded.value && (_expandedPriority.value == IslandPriority.SCREEN_RECORDING || !isOccupied)) {
+            collapse()
+        }
     }
 
     fun expand(priority: IslandPriority? = null) {
@@ -139,6 +219,7 @@ object IslandStateManager {
     fun collapse() {
         _isExpanded.value = false
         _expandedPriority.value = null
+        _isKeyboardFocused.value = false
     }
 
     fun toggleExpand(priority: IslandPriority? = null) {

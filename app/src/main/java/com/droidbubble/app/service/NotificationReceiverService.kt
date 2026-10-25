@@ -1,9 +1,12 @@
 package com.droidbubble.app.service
 
+import android.app.ActivityOptions
 import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
@@ -12,7 +15,9 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -30,6 +35,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class NotificationReceiverService : NotificationListenerService() {
+
+    companion object {
+        var instance: NotificationReceiverService? = null
+            private set
+    }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var settingsRepository: SettingsRepository
@@ -65,11 +75,16 @@ class NotificationReceiverService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         settingsRepository = SettingsRepository(this)
         serviceScope.launch {
             settingsRepository.settingsFlow.collectLatest {
                 currentSettings = it
             }
+        }
+
+        IslandStateManager.onPauseMedia = {
+            activeMediaController?.transportControls?.pause()
         }
 
         IslandStateManager.onPlayPause = {
@@ -97,6 +112,34 @@ class NotificationReceiverService : NotificationListenerService() {
 
         IslandStateManager.onDismissNotification = { key ->
             runCatching { cancelNotification(key) }
+        }
+
+        IslandStateManager.onSendReply = { key, replyText ->
+            val notif = IslandStateManager.activeNotification.value
+            if (notif != null && notif.key == key) {
+                val replyAction = notif.actions.firstOrNull { it.isReply }
+                if (replyAction?.actionIntent != null && replyAction.remoteInputKey != null) {
+                    val intent = Intent()
+                    val bundle = Bundle()
+                    bundle.putCharSequence(replyAction.remoteInputKey, replyText)
+                    val remoteInput = android.app.RemoteInput.Builder(replyAction.remoteInputKey).build()
+                    android.app.RemoteInput.addResultsToIntent(arrayOf(remoteInput), intent, bundle)
+                    try {
+                        val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            ActivityOptions.makeBasic().apply {
+                                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                            }.toBundle()
+                        } else null
+                        if (options != null) {
+                            replyAction.actionIntent.send(this@NotificationReceiverService, 0, intent, null, null, null, options)
+                        } else {
+                            replyAction.actionIntent.send(this@NotificationReceiverService, 0, intent)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("NotificationReceiver", "Error sending reply", e)
+                    }
+                }
+            }
         }
     }
 
@@ -126,34 +169,69 @@ class NotificationReceiverService : NotificationListenerService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance === this) {
+            instance = null
+        }
         serviceScope.cancel()
+    }
+
+    fun refreshMedia() {
+        try {
+            val componentName = ComponentName(this, NotificationReceiverService::class.java)
+            val controllers = mediaSessionManager?.getActiveSessions(componentName)
+            updateActiveMediaController(controllers)
+        } catch (_: Exception) {
+            updateMediaInfo()
+        }
     }
 
     private fun findBestController(controllers: List<MediaController>?): MediaController? {
         if (controllers.isNullOrEmpty()) return null
 
-        // 1. Prioritize any controller that is currently actively playing
-        val playing = controllers.firstOrNull {
-            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        // 1. Prioritize any controller that is currently actively playing with valid metadata
+        val playingWithMeta = controllers.firstOrNull {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING &&
+                    (!it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrBlank() ||
+                     !it.metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).isNullOrBlank())
         }
-        if (playing != null) return playing
+        if (playingWithMeta != null) return playingWithMeta
 
-        // 2. If current active controller is still in list and has metadata, keep it (do not switch just because a new app opened)
+        // 2. If current active controller is still in the list and has valid metadata, keep it!
+        // This ensures that when entering another app with audio that temporarily pauses our music player
+        // (or an app with no song metadata), the user's music player remains active and interactive on the island!
         val current = activeMediaController
         if (current != null) {
             val stillPresent = controllers.firstOrNull { it.packageName == current.packageName }
-            if (stillPresent != null && stillPresent.metadata != null) {
-                return stillPresent
+            if (stillPresent != null) {
+                val hasMeta = !stillPresent.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrBlank() ||
+                        !stillPresent.metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).isNullOrBlank()
+                if (hasMeta) {
+                    return stillPresent
+                }
             }
         }
 
-        // 3. Otherwise find any controller with valid metadata
+        // 3. Otherwise find any controller with valid metadata (e.g. paused music player like Spotify)
         val withMeta = controllers.firstOrNull {
             val title = it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
                 ?: it.metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
             !title.isNullOrBlank()
         }
         if (withMeta != null) return withMeta
+
+        // 4. Any controller that is currently actively playing (even without metadata)
+        val playing = controllers.firstOrNull {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        }
+        if (playing != null) return playing
+
+        // 5. Keep current controller if still in list
+        if (current != null) {
+            val stillPresent = controllers.firstOrNull { it.packageName == current.packageName }
+            if (stillPresent != null) {
+                return stillPresent
+            }
+        }
 
         return controllers.firstOrNull()
     }
@@ -195,21 +273,50 @@ class NotificationReceiverService : NotificationListenerService() {
             return
         }
 
-        val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            ?: "Playing Audio"
-        val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_AUTHOR)
+        val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
+        val rawTitle = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)?.takeIf { it.isNotBlank() }
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }
+
+        val title = rawTitle ?: if (isPlaying) "Playing Audio" else null
+        if (title == null) {
+            IslandStateManager.updateMedia(null)
+            return
+        }
+        val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)?.takeIf { it.isNotBlank() }
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_AUTHOR)?.takeIf { it.isNotBlank() }
             ?: controller.packageName
 
-        val artBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+        var artBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
 
+        // If bitmap is not directly available, check if artwork URI is provided
+        if (artBitmap == null) {
+            val uriStr = metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI)
+                ?: metadata?.getString(MediaMetadata.METADATA_KEY_ART_URI)
+                ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI)
+            if (!uriStr.isNullOrBlank()) {
+                artBitmap = runCatching {
+                    val uri = Uri.parse(uriStr)
+                    contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    }
+                }.getOrNull()
+            }
+        }
+
+        // Also check if an active notification from this app provides large icon art
+        if (artBitmap == null) {
+            artBitmap = runCatching {
+                activeNotifications?.firstOrNull { it.packageName == controller.packageName }
+                    ?.notification?.getLargeIcon()?.loadDrawable(this)?.let { drawableToBitmap(it) }
+            }.getOrNull()
+        }
+
         val appIconBitmap = getAppIconBitmap(controller.packageName)
 
-        val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
         val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
         val position = playbackState?.position ?: 0L
 
@@ -230,7 +337,8 @@ class NotificationReceiverService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
-        if (sbn == null || !currentSettings.showNotifications) return
+        if (sbn == null) return
+        if (!currentSettings.showNotifications && !currentSettings.showLiveProgress) return
 
         val packageName = sbn.packageName
         if (packageName == this.packageName) return // Ignore self
@@ -249,6 +357,13 @@ class NotificationReceiverService : NotificationListenerService() {
         val maxProgress = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
         val isIndeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
         val hasProgress = maxProgress > 0 || isIndeterminate || (progress >= 0 && maxProgress > 0)
+
+        // Separate check: live progress notifications vs normal notification alerts
+        if (hasProgress) {
+            if (!currentSettings.showLiveProgress) return
+        } else {
+            if (!currentSettings.showNotifications) return
+        }
 
         // Skip ongoing notifications UNLESS they report live progress (e.g. downloads)
         val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
@@ -275,7 +390,17 @@ class NotificationReceiverService : NotificationListenerService() {
         val actions = mutableListOf<NotificationAction>()
         notification.actions?.forEach { action ->
             if (action != null && !action.title.isNullOrBlank()) {
-                actions.add(NotificationAction(action.title.toString(), action.actionIntent))
+                val remoteInput = action.remoteInputs?.firstOrNull()
+                val choices = remoteInput?.choices?.map { it.toString() } ?: emptyList()
+                actions.add(
+                    NotificationAction(
+                        title = action.title.toString(),
+                        actionIntent = action.actionIntent,
+                        remoteInputKey = remoteInput?.resultKey,
+                        remoteInputLabel = remoteInput?.label?.toString(),
+                        remoteInputChoices = choices
+                    )
+                )
             }
         }
 

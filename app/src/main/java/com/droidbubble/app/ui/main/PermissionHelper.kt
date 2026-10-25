@@ -45,6 +45,24 @@ object PermissionHelper {
         return powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
     }
 
+    fun isAccessibilityGranted(context: Context): Boolean {
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        val colonSplitter = android.text.TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServices)
+        val myService = "${context.packageName}/${com.droidbubble.app.service.IslandAccessibilityService::class.java.name}"
+        val myShortService = "${context.packageName}/.service.IslandAccessibilityService"
+        while (colonSplitter.hasNext()) {
+            val componentName = colonSplitter.next()
+            if (componentName.equals(myService, ignoreCase = true) || componentName.equals(myShortService, ignoreCase = true)) {
+                return true
+            }
+        }
+        return false
+    }
+
     fun getPendingPermissions(context: Context): List<PermissionItem> {
         val list = mutableListOf<PermissionItem>()
 
@@ -114,6 +132,20 @@ object PermissionHelper {
                             Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                             Uri.parse("package:${ctx.packageName}")
                         )
+                    }
+                )
+            )
+        }
+
+        if (!isAccessibilityGranted(context)) {
+            list.add(
+                PermissionItem(
+                    id = "accessibility",
+                    title = "Status Bar Touch Override",
+                    description = "Required to elevate the Island above the status bar so taps are never blocked when using other apps",
+                    isGranted = false,
+                    createIntent = {
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                     }
                 )
             )

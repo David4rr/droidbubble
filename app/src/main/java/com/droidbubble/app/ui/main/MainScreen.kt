@@ -27,7 +27,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import java.util.Locale
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -182,47 +184,17 @@ fun MainScreen(
         }
     }
 
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-
     Scaffold(
-        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            LargeTopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "Droidbubble",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 32.sp
-                        )
-                        Text(
-                            text = "Dynamic Island for Android",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                },
-                scrollBehavior = scrollBehavior,
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
-                )
-            )
-        }
+        modifier = modifier
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Live Preview Card
-            item {
-                IslandPreviewCard(settings = settings)
-            }
-
             // SECTION 1: PERMISSIONS (Hides individual item once granted, hides whole section when all granted!)
             if (pendingPermissions.isNotEmpty()) {
                 item {
@@ -234,100 +206,110 @@ fun MainScreen(
                     )
                 }
 
-                items(pendingPermissions, key = { it.id }) { perm ->
-                    ElevatedCard(
+                item {
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.elevatedCardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
-                        )
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = {
-                                Text(perm.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                            },
-                            supportingContent = {
-                                Text(perm.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            leadingContent = {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.errorContainer),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            },
-                            trailingContent = {
-                                Button(
-                                    onClick = {
-                                        runCatching { context.startActivity(perm.createIntent(context)) }
-                                    },
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Grant", fontWeight = FontWeight.SemiBold)
-                                }
+                        pendingPermissions.forEachIndexed { index, perm ->
+                            val position = when {
+                                pendingPermissions.size == 1 -> GroupPosition.SINGLE
+                                index == 0 -> GroupPosition.TOP
+                                index == pendingPermissions.size - 1 -> GroupPosition.BOTTOM
+                                else -> GroupPosition.MIDDLE
                             }
-                        )
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = getGroupedShape(position),
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                            ) {
+                                ListItem(
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    headlineContent = {
+                                        Text(perm.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    },
+                                    supportingContent = {
+                                        Text(perm.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    },
+                                    leadingContent = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.errorContainer),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Warning,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    },
+                                    trailingContent = {
+                                        Button(
+                                            onClick = {
+                                                runCatching { context.startActivity(perm.createIntent(context)) }
+                                            },
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Text("Grant", fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // SECTION 2: ISLAND CUSTOMISATION
+            // SECTION 2: MASTER ENABLE SWITCH
+            item {
+                SettingsCardItem(position = GroupPosition.SINGLE) {
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        headlineContent = { Text("Enable Island", fontWeight = FontWeight.SemiBold) },
+                        supportingContent = { Text("Show the floating overlay across all apps") },
+                        leadingContent = {
+                            Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = settings.isEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.toggleEnabled(context, enabled)
+                                }
+                            )
+                        }
+                    )
+                }
+            }
+
+            // SECTION 3: GEOMETRY SLIDERS (Separated items, 4.dp gap, inner square-ish outer rounded)
             item {
                 SectionHeader(
-                    title = "Island Customisation",
-                    icon = Icons.Default.Tune
+                    title = "Island Dimensions",
+                    icon = Icons.Default.Straighten
                 )
             }
 
             item {
-                ElevatedCard(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                    )
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        // Enable Switch
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Enable Island", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Show the floating overlay across all apps") },
-                            leadingContent = {
-                                Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.isEnabled,
-                                    onCheckedChange = { enabled ->
-                                        viewModel.toggleEnabled(context, enabled)
-                                    }
-                                )
-                            }
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Width Slider
+                    SettingsCardItem(position = GroupPosition.TOP) {
                         SliderSettingItem(
                             label = "Width",
                             value = settings.widthDp.toFloat(),
                             unit = "dp",
-                            valueRange = 120f..260f,
+                            valueRange = 50f..260f,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(widthDp = it.roundToInt()) } }
                         )
+                    }
 
-                        // Height Slider
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         SliderSettingItem(
                             label = "Height",
                             value = settings.heightDp.toFloat(),
@@ -335,8 +317,9 @@ fun MainScreen(
                             valueRange = 26f..56f,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(heightDp = it.roundToInt()) } }
                         )
+                    }
 
-                        // Corner Radius Slider
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         SliderSettingItem(
                             label = "Corner Radius",
                             value = settings.cornerRadiusDp.toFloat(),
@@ -344,8 +327,9 @@ fun MainScreen(
                             valueRange = 10f..28f,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(cornerRadiusDp = it.roundToInt()) } }
                         )
+                    }
 
-                        // Top Offset (Camera Cutout Alignment)
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         SliderSettingItem(
                             label = "Top Offset (Notch Line-up)",
                             value = settings.topOffsetDp.toFloat(),
@@ -353,8 +337,9 @@ fun MainScreen(
                             valueRange = 0f..60f,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(topOffsetDp = it.roundToInt()) } }
                         )
+                    }
 
-                        // Horizontal Offset
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         SliderSettingItem(
                             label = "Horizontal Offset",
                             value = settings.horizontalOffsetDp.toFloat(),
@@ -362,8 +347,9 @@ fun MainScreen(
                             valueRange = -50f..50f,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(horizontalOffsetDp = it.roundToInt()) } }
                         )
+                    }
 
-                        // Expanded Scale Slider
+                    SettingsCardItem(position = GroupPosition.BOTTOM) {
                         SliderSettingItem(
                             label = "Expanded Card Scale",
                             value = settings.expandedScale,
@@ -372,10 +358,25 @@ fun MainScreen(
                             steps = 5,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(expandedScale = (it * 10).roundToInt() / 10f) } }
                         )
+                    }
+                }
+            }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+            // SECTION 4: APPEARANCE & FEEDBACK
+            item {
+                SectionHeader(
+                    title = "Appearance & Feedback",
+                    icon = Icons.Default.Palette
+                )
+            }
 
-                        // Outline Toggle
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val outlineActive = settings.showOutline
+                    SettingsCardItem(position = if (outlineActive) GroupPosition.TOP else GroupPosition.SINGLE) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Island Outline", fontWeight = FontWeight.SemiBold) },
@@ -392,68 +393,69 @@ fun MainScreen(
                                 )
                             }
                         )
+                    }
 
-                        AnimatedVisibility(visible = settings.showOutline) {
-                            Column {
-                                // Outline Thickness
-                                SliderSettingItem(
-                                    label = "Outline Thickness",
-                                    value = settings.outlineThicknessDp,
-                                    unit = "dp",
-                                    valueRange = 0.5f..4.0f,
-                                    onValueChange = { viewModel.updateSettings { s -> s.copy(outlineThicknessDp = (it * 10).roundToInt() / 10f) } }
-                                )
-
-                                // Outline Colour Picker Button
-                                ListItem(
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                    headlineContent = { Text("Outline Colour", fontWeight = FontWeight.SemiBold) },
-                                    supportingContent = { Text("Tap to select vibrant border accent") },
-                                    leadingContent = {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(settings.outlineColorArgb))
-                                                .border(1.dp, Color.Gray, CircleShape)
-                                        )
-                                    },
-                                    trailingContent = {
-                                        OutlinedButton(
-                                            onClick = { showColorPicker = true },
-                                            shape = RoundedCornerShape(12.dp)
-                                        ) {
-                                            Text("Change")
-                                        }
-                                    }
-                                )
-                            }
+                    if (outlineActive) {
+                        SettingsCardItem(position = GroupPosition.MIDDLE) {
+                            SliderSettingItem(
+                                label = "Outline Thickness",
+                                value = settings.outlineThicknessDp,
+                                unit = "dp",
+                                valueRange = 0.5f..4.0f,
+                                onValueChange = { viewModel.updateSettings { s -> s.copy(outlineThicknessDp = (it * 10).roundToInt() / 10f) } }
+                            )
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Haptics Toggle
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Tactile tick on expand and collapse") },
-                            leadingContent = {
-                                Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.hapticsEnabled,
-                                    onCheckedChange = { haptics ->
-                                        viewModel.updateSettings { it.copy(hapticsEnabled = haptics) }
+                        SettingsCardItem(position = GroupPosition.BOTTOM) {
+                            ListItem(
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                headlineContent = { Text("Outline Colour", fontWeight = FontWeight.SemiBold) },
+                                supportingContent = { Text("Tap to select vibrant border accent") },
+                                leadingContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(settings.outlineColorArgb))
+                                            .border(1.dp, Color.Gray, CircleShape)
+                                    )
+                                },
+                                trailingContent = {
+                                    OutlinedButton(
+                                        onClick = { showColorPicker = true },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("Change")
                                     }
-                                )
-                            }
-                        )
+                                }
+                            )
+                        }
                     }
                 }
             }
 
-            // SECTION 3: WHAT TO SHOW
+            item {
+                SettingsCardItem(position = GroupPosition.SINGLE) {
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
+                        supportingContent = { Text("Tactile tick on expand, collapse, and dismiss") },
+                        leadingContent = {
+                            Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = settings.hapticsEnabled,
+                                onCheckedChange = { haptics ->
+                                    viewModel.updateSettings { it.copy(hapticsEnabled = haptics) }
+                                }
+                            )
+                        }
+                    )
+                }
+            }
+
+            // SECTION 5: FEATURES
             item {
                 SectionHeader(
                     title = "Island Features",
@@ -462,15 +464,11 @@ fun MainScreen(
             }
 
             item {
-                ElevatedCard(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                    )
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        // Media Feature
+                    SettingsCardItem(position = GroupPosition.TOP) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Media Player", fontWeight = FontWeight.SemiBold) },
@@ -487,12 +485,13 @@ fun MainScreen(
                                 )
                             }
                         )
+                    }
 
-                        // Notifications Feature
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Incoming Notifications", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("Pop-in dynamic bubble with quick actions & replies") },
+                            supportingContent = { Text("Pop-in dynamic alerts with quick actions & replies") },
                             leadingContent = {
                                 Icon(Icons.Default.Notifications, contentDescription = null, tint = Color(0xFFFFB74D))
                             },
@@ -505,9 +504,29 @@ fun MainScreen(
                                 )
                             }
                         )
+                    }
 
-                        // Per-app Filter Button
-                        AnimatedVisibility(visible = settings.showNotifications) {
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Live Progress & Activities", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text("Real-time progress bars for downloads, rides & transfers") },
+                            leadingContent = {
+                                Icon(Icons.Default.Animation, contentDescription = null, tint = Color(0xFF42A5F5))
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.showLiveProgress,
+                                    onCheckedChange = { show ->
+                                        viewModel.updateSettings { it.copy(showLiveProgress = show) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    if (settings.showNotifications || settings.showLiveProgress) {
+                        SettingsCardItem(position = GroupPosition.MIDDLE) {
                             ListItem(
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                 headlineContent = { Text("Per-App Notification Filter", fontWeight = FontWeight.SemiBold) },
@@ -528,8 +547,9 @@ fun MainScreen(
                                 }
                             )
                         }
+                    }
 
-                        // Screen Recording Feature
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Screen Recording Indicator", fontWeight = FontWeight.SemiBold) },
@@ -546,83 +566,27 @@ fun MainScreen(
                                 )
                             }
                         )
-
-                        // Trigger Screen Recording Button
-                        Spacer(modifier = Modifier.height(8.dp))
-                        FilledTonalButton(
-                            onClick = {
-                                val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                                screenRecordingLauncher.launch(projectionManager.createScreenCaptureIntent())
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Start Test Screen Recording")
-                        }
                     }
-                }
-            }
 
-            // SECTION 4: ABOUT
-            item {
-                SectionHeader(
-                    title = "About",
-                    icon = Icons.Default.Info
-                )
-            }
-
-            item {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color.Black)
-                                    .border(1.5.dp, Color(0xFF00E5FF), RoundedCornerShape(16.dp)),
-                                contentAlignment = Alignment.Center
+                    SettingsCardItem(position = GroupPosition.BOTTOM) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                    screenRecordingLauncher.launch(projectionManager.createScreenCaptureIntent())
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp, 10.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(16.dp))
-
-                            Column {
-                                Text(
-                                    text = "Droidbubble",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 18.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Version 1.0 • Material 3 Expressive",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Start Test Screen Recording")
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Text(
-                            text = "A native Android adaptation of Dynamic Island powered by Jetpack Compose. Seamlessly merges active media playback, real-time screen recording, and pop-in notification alerts right around your device camera cutout.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }
@@ -822,6 +786,50 @@ fun SectionHeader(
     }
 }
 
+enum class GroupPosition {
+    TOP,
+    MIDDLE,
+    BOTTOM,
+    SINGLE
+}
+
+fun getGroupedShape(position: GroupPosition): RoundedCornerShape {
+    val outerRadius = 22.dp
+    val innerRadius = 4.dp
+    return when (position) {
+        GroupPosition.TOP -> RoundedCornerShape(
+            topStart = outerRadius,
+            topEnd = outerRadius,
+            bottomStart = innerRadius,
+            bottomEnd = innerRadius
+        )
+        GroupPosition.MIDDLE -> RoundedCornerShape(innerRadius)
+        GroupPosition.BOTTOM -> RoundedCornerShape(
+            topStart = innerRadius,
+            topEnd = innerRadius,
+            bottomStart = outerRadius,
+            bottomEnd = outerRadius
+        )
+        GroupPosition.SINGLE -> RoundedCornerShape(outerRadius)
+    }
+}
+
+@Composable
+fun SettingsCardItem(
+    position: GroupPosition,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = getGroupedShape(position),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 1.dp
+    ) {
+        content()
+    }
+}
+
 @Composable
 fun SliderSettingItem(
     label: String,
@@ -834,111 +842,41 @@ fun SliderSettingItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(horizontal = 20.dp, vertical = 14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
             Text(
-                text = "${if (unit == "x" || unit == "dp") String.format("%.1f", value).replace(".0", "") else value.toInt()} $unit",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
             )
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "${if (unit == "x" || unit == "dp") String.format(Locale.US, "%.1f", value).replace(".0", "") else value.toInt()} $unit",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
-
+        Spacer(modifier = Modifier.height(8.dp))
         Slider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
             steps = steps,
-            modifier = Modifier.height(20.dp)
+            modifier = Modifier.height(24.dp)
         )
-    }
-}
-
-@Composable
-fun IslandPreviewCard(settings: IslandSettings) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Live Island Preview",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Simulated phone notch area with island
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(90.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF18181B)),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                // The Island Pill Preview
-                Box(
-                    modifier = Modifier
-                        .padding(top = (settings.topOffsetDp / 2).coerceAtLeast(6).dp)
-                        .width((settings.widthDp * 0.85f).dp)
-                        .height((settings.heightDp * 0.85f).dp)
-                        .clip(RoundedCornerShape((settings.cornerRadiusDp * 0.85f).dp))
-                        .background(Color.Black)
-                        .then(
-                            if (settings.showOutline) {
-                                Modifier.border(
-                                    width = settings.outlineThicknessDp.dp,
-                                    color = Color(settings.outlineColorArgb),
-                                    shape = RoundedCornerShape((settings.cornerRadiusDp * 0.85f).dp)
-                                )
-                            } else Modifier
-                        )
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF00E5FF))
-                        )
-                        Text(
-                            text = "Droidbubble",
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFFF5252))
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 
