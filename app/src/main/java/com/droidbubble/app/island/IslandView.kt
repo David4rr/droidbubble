@@ -32,6 +32,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -58,10 +60,15 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.FlashlightOff
+import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
@@ -96,15 +103,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -183,8 +195,15 @@ fun IslandOverlayRoot(
     val isPopIn by IslandStateManager.isPopInActive.collectAsState()
     val media by IslandStateManager.activeMedia.collectAsState()
     val notification by IslandStateManager.activeNotification.collectAsState()
+    val progressNotification by IslandStateManager.activeProgress.collectAsState()
     val recording by IslandStateManager.screenRecordingState.collectAsState()
     val charging by IslandStateManager.activeCharging.collectAsState()
+    val isUnlocked by IslandStateManager.isUnlocked.collectAsState()
+    val isBluetoothConnected by IslandStateManager.isBluetoothConnected.collectAsState()
+    val isFlashlightOn by IslandStateManager.isFlashlightOn.collectAsState()
+    val flashlightLevel by IslandStateManager.flashlightLevel.collectAsState()
+    val maxFlashlightLevel by IslandStateManager.maxFlashlightLevel.collectAsState()
+    val isKeyboardFocused by IslandStateManager.isKeyboardFocused.collectAsState()
 
     val view = LocalView.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -193,26 +212,36 @@ fun IslandOverlayRoot(
 
     val currentMedia = media
     val currentNotif = notification
+    val currentProgress = progressNotification
     val mediaArt = currentMedia?.albumArt ?: currentMedia?.appIcon
     val mediaAccentColor = remember(mediaArt) { extractMediaAccentColor(mediaArt) }
     val isRecording = allowInOrientation && recording.isRecording && settings.showScreenRecording
-    val isProgress = allowInOrientation && currentNotif?.hasProgress == true && settings.showLiveProgress
-    val isNotification = allowInOrientation && currentNotif != null && !isProgress && settings.showNotifications
+    val isProgress = allowInOrientation && currentProgress != null && settings.showLiveProgress
+    val isNotification = allowInOrientation && currentNotif != null && settings.showNotifications
     val isMedia = allowInOrientation && currentMedia != null && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
+    val isFlashlight = allowInOrientation && isFlashlightOn
     val isCharging = allowInOrientation && charging != null
+    val isUnlock = allowInOrientation && isUnlocked && !isCharging
+    val isBluetooth = allowInOrientation && isBluetoothConnected && !isCharging && !isUnlock
 
-    val isOccupied = allowInOrientation && (isRecording || isNotification || isMedia || isProgress || isCharging)
+    val isOccupied = allowInOrientation && (isRecording || isNotification || isMedia || isProgress || isCharging || isUnlock || isBluetooth || isFlashlight)
 
-    // Determine dual-island state (when 2+ activities occupy the island, temporarily overshadowed by charging)
+    // Determine dual-island state (when 2+ activities occupy the island, temporarily overshadowed by charging, unlock, or bluetooth)
     val activeCount = (if (isRecording) 1 else 0) +
             (if (isNotification) 1 else 0) +
             (if (isMedia) 1 else 0) +
-            (if (isProgress) 1 else 0)
-    val isDual = !isCharging && activeCount >= 2
+            (if (isProgress) 1 else 0) +
+            (if (isFlashlight) 1 else 0)
+    val isDual = !isCharging && !isUnlock && !isBluetooth && activeCount >= 2
 
-    // Primary & Secondary activity assignment
+    // Primary & Secondary activity assignment:
+    // Media player is ALWAYS the primary activity so notifications/alerts are sent to the secondary island.
+    // Flashlight is prioritised right after media player!
+    // In general, notification alerts are lowest priority, so even when live progress or flashlight is active,
+    // notifications pop into the secondary island.
     val primaryPriority: IslandPriority = when {
         isMedia -> IslandPriority.MEDIA
+        isFlashlight -> IslandPriority.FLASHLIGHT
         isProgress -> IslandPriority.PROGRESS
         isRecording -> IslandPriority.SCREEN_RECORDING
         isNotification -> IslandPriority.POP_NOTIFICATION
@@ -220,12 +249,58 @@ fun IslandOverlayRoot(
     }
 
     val secondaryPriority: IslandPriority? = when {
-        isDual && isMedia && isProgress -> IslandPriority.PROGRESS
-        isDual && isMedia && isNotification -> IslandPriority.POP_NOTIFICATION
-        isDual && isMedia && isRecording -> IslandPriority.SCREEN_RECORDING
-        isDual && isProgress && isNotification -> IslandPriority.POP_NOTIFICATION
-        isDual && isProgress && isRecording -> IslandPriority.SCREEN_RECORDING
-        isDual && isRecording && isNotification -> IslandPriority.POP_NOTIFICATION
+        !isDual -> null
+        primaryPriority == IslandPriority.MEDIA -> {
+            when {
+                // When notification arrives while media is playing, it is sent to the secondary island
+                isPopIn && isNotification -> IslandPriority.POP_NOTIFICATION
+                isFlashlight -> IslandPriority.FLASHLIGHT
+                isProgress -> IslandPriority.PROGRESS
+                isNotification -> IslandPriority.POP_NOTIFICATION
+                isRecording -> IslandPriority.SCREEN_RECORDING
+                else -> null
+            }
+        }
+        primaryPriority == IslandPriority.FLASHLIGHT -> {
+            when {
+                isPopIn && isNotification -> IslandPriority.POP_NOTIFICATION
+                isProgress -> IslandPriority.PROGRESS
+                isNotification -> IslandPriority.POP_NOTIFICATION
+                isRecording -> IslandPriority.SCREEN_RECORDING
+                isMedia -> IslandPriority.MEDIA
+                else -> null
+            }
+        }
+        primaryPriority == IslandPriority.PROGRESS -> {
+            when {
+                // When live progress is active, a notification pops into the secondary island
+                isPopIn && isNotification -> IslandPriority.POP_NOTIFICATION
+                isFlashlight -> IslandPriority.FLASHLIGHT
+                isNotification -> IslandPriority.POP_NOTIFICATION
+                isRecording -> IslandPriority.SCREEN_RECORDING
+                isMedia -> IslandPriority.MEDIA
+                else -> null
+            }
+        }
+        primaryPriority == IslandPriority.SCREEN_RECORDING -> {
+            when {
+                isPopIn && isNotification -> IslandPriority.POP_NOTIFICATION
+                isFlashlight -> IslandPriority.FLASHLIGHT
+                isNotification -> IslandPriority.POP_NOTIFICATION
+                isMedia -> IslandPriority.MEDIA
+                isProgress -> IslandPriority.PROGRESS
+                else -> null
+            }
+        }
+        primaryPriority == IslandPriority.POP_NOTIFICATION -> {
+            when {
+                isMedia -> IslandPriority.MEDIA
+                isFlashlight -> IslandPriority.FLASHLIGHT
+                isProgress -> IslandPriority.PROGRESS
+                isRecording -> IslandPriority.SCREEN_RECORDING
+                else -> null
+            }
+        }
         else -> null
     }
 
@@ -237,12 +312,14 @@ fun IslandOverlayRoot(
     } else {
         defaultTaskOutline
     }
+    val flashlightOutline = Color.White.copy(alpha = 0.25f)
 
     // Card 1 (Main Island):
     val primaryOutlineColor = when {
         isCharging -> Color(0xFF30D158).copy(alpha = 0.30f)
         primaryPriority == IslandPriority.SCREEN_RECORDING -> redRecordingOutline
         primaryPriority == IslandPriority.MEDIA -> mediaOutline
+        primaryPriority == IslandPriority.FLASHLIGHT -> flashlightOutline
         else -> defaultTaskOutline
     }
 
@@ -251,6 +328,7 @@ fun IslandOverlayRoot(
     val secondaryOutlineColor = when {
         secondaryPriority == IslandPriority.SCREEN_RECORDING -> redRecordingOutline
         secondaryPriority == IslandPriority.MEDIA -> mediaOutline
+        secondaryPriority == IslandPriority.FLASHLIGHT -> flashlightOutline
         else -> defaultTaskOutline
     }
 
@@ -259,7 +337,7 @@ fun IslandOverlayRoot(
 
     // Animation Specs (dynamically scaled by settings.animationSpeed):
     val sizeAnimSpecDp = when {
-        isCharging -> spring<androidx.compose.ui.unit.Dp>(
+        isCharging || isUnlock || isBluetooth -> spring<androidx.compose.ui.unit.Dp>(
             dampingRatio = 0.60f,
             stiffness = 280f * speedSq
         )
@@ -274,7 +352,7 @@ fun IslandOverlayRoot(
     }
 
     val sizeAnimSpecFloat = when {
-        isCharging -> spring<Float>(
+        isCharging || isUnlock || isBluetooth -> spring<Float>(
             dampingRatio = 0.60f,
             stiffness = 280f * speedSq
         )
@@ -295,8 +373,8 @@ fun IslandOverlayRoot(
         )
     } else {
         tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = (350 / speed).roundToInt(),
-            easing = CubicBezierEasing(0.30f, 0.0f, 0.20f, 1.0f)
+            durationMillis = (200 / speed).roundToInt(),
+            easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
         )
     }
 
@@ -316,7 +394,7 @@ fun IslandOverlayRoot(
     }
 
     val expandProgress by animateFloatAsState(
-        targetValue = if (isExpanded && !isCharging) 1f else 0f,
+        targetValue = if (isExpanded && !isCharging && !isUnlock && !isBluetooth) 1f else 0f,
         animationSpec = sizeAnimSpecFloat,
         label = "expandProgress"
     )
@@ -325,6 +403,70 @@ fun IslandOverlayRoot(
         targetValue = if (isCharging) 1f else 0f,
         animationSpec = tween(durationMillis = (130 / speed).roundToInt(), easing = FastOutSlowInEasing),
         label = "chargingContentAlpha"
+    )
+
+    val unlockContentAlpha by animateFloatAsState(
+        targetValue = if (isUnlock) 1f else 0f,
+        animationSpec = tween(durationMillis = (130 / speed).roundToInt(), easing = FastOutSlowInEasing),
+        label = "unlockContentAlpha"
+    )
+
+    var unlockCheckmarkVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(isUnlock) {
+        if (isUnlock) {
+            unlockCheckmarkVisible = false
+            kotlinx.coroutines.delay((110L / speed).toLong())
+            unlockCheckmarkVisible = true
+        } else {
+            unlockCheckmarkVisible = false
+        }
+    }
+
+    val unlockCheckmarkAlpha by animateFloatAsState(
+        targetValue = if (unlockCheckmarkVisible && isUnlock) 1f else 0f,
+        animationSpec = tween(durationMillis = (150 / speed).roundToInt(), easing = FastOutSlowInEasing),
+        label = "unlockCheckmarkAlpha"
+    )
+
+    val unlockCheckmarkScale by animateFloatAsState(
+        targetValue = if (unlockCheckmarkVisible && isUnlock) 1f else 0.4f,
+        animationSpec = spring(
+            dampingRatio = 0.52f, // Gentle bounce: overshoots slightly by ~3-4px, then settles
+            stiffness = 320f * speedSq
+        ),
+        label = "unlockCheckmarkScale"
+    )
+
+    val bluetoothContentAlpha by animateFloatAsState(
+        targetValue = if (isBluetooth) 1f else 0f,
+        animationSpec = tween(durationMillis = (130 / speed).roundToInt(), easing = FastOutSlowInEasing),
+        label = "bluetoothContentAlpha"
+    )
+
+    var bluetoothCheckmarkVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(isBluetooth) {
+        if (isBluetooth) {
+            bluetoothCheckmarkVisible = false
+            kotlinx.coroutines.delay((110L / speed).toLong())
+            bluetoothCheckmarkVisible = true
+        } else {
+            bluetoothCheckmarkVisible = false
+        }
+    }
+
+    val bluetoothCheckmarkAlpha by animateFloatAsState(
+        targetValue = if (bluetoothCheckmarkVisible && isBluetooth) 1f else 0f,
+        animationSpec = tween(durationMillis = (150 / speed).roundToInt(), easing = FastOutSlowInEasing),
+        label = "bluetoothCheckmarkAlpha"
+    )
+
+    val bluetoothCheckmarkScale by animateFloatAsState(
+        targetValue = if (bluetoothCheckmarkVisible && isBluetooth) 1f else 0.4f,
+        animationSpec = spring(
+            dampingRatio = 0.52f, // Gentle bounce: overshoots slightly by ~3-4px, then settles
+            stiffness = 320f * speedSq
+        ),
+        label = "bluetoothCheckmarkScale"
     )
 
     val chargingPct = charging?.percentage ?: 0
@@ -347,6 +489,7 @@ fun IslandOverlayRoot(
     )
 
     val chargingIslandWidth = (settings.widthDp + 20).dp.coerceAtLeast(140.dp)
+    val unlockIslandWidth = (settings.widthDp * 0.82f).dp.coerceAtLeast(108.dp)
 
     // Minimised Island Pill: sits docked at settings.topOffsetDp.dp.
     // When expanding, it animates from its compact width down to 0.dp.
@@ -355,27 +498,39 @@ fun IslandOverlayRoot(
         !isOccupied -> 0.dp
         isExpanded -> 0.dp // Shrinks horizontally into 0 width while card expands!
         isCharging -> chargingIslandWidth
+        isUnlock || isBluetooth -> unlockIslandWidth
         isDual -> (settings.widthDp * 0.74f).dp
         else -> settings.widthDp.dp
     }
 
     // Expanded Cards: Card 1 (and Card 2 if dual mode).
     // When expanded, Card 1 slides down to (settings.topOffsetDp + 52).dp, widening to 340.dp * scale.
-    // When minimising, Card 1 shrinks back to 0.dp width as it slides back up.
-    val targetCard1Width = if (isExpanded && !isCharging) {
+    // When minimising, Card 1 shrinks back to 0.dp width (transitioning into the small circle at the punch hole) as it slides back up.
+    val targetCard1Width = if (isExpanded && !isCharging && !isUnlock && !isBluetooth) {
         (340.dp * settings.expandedScale)
     } else {
         0.dp
     }
 
+    val notifText = currentNotif?.text ?: ""
+    val isLongNotif = notifText.length > 55 || notifText.contains('\n')
+    val notifBaseHeight = when {
+        isKeyboardFocused -> 188.dp
+        isLongNotif -> 168.dp
+        else -> 144.dp
+    }
+
     val targetCard1Height = when {
         isExpanded && primaryPriority == IslandPriority.SCREEN_RECORDING -> (115.dp * settings.expandedScale)
+        isExpanded && primaryPriority == IslandPriority.POP_NOTIFICATION -> (notifBaseHeight * settings.expandedScale)
+        isExpanded && primaryPriority == IslandPriority.PROGRESS -> (165.dp * settings.expandedScale)
+        isExpanded && primaryPriority == IslandPriority.FLASHLIGHT -> (205.dp * settings.expandedScale)
         isExpanded -> (195.dp * settings.expandedScale)
         else -> settings.heightDp.dp
     }
 
     val targetCornerRadius = when {
-        isExpanded && !isCharging -> 28.dp
+        isExpanded && !isCharging && !isUnlock && !isBluetooth -> 28.dp
         else -> settings.cornerRadiusDp.dp
     }
 
@@ -390,9 +545,15 @@ fun IslandOverlayRoot(
         }
     }
 
-    val showSecondaryCard = !isCharging && activeCount >= 2 && secondaryPriority != null
+    val showSecondaryCard = !isCharging && !isUnlock && !isBluetooth && activeCount >= 2 && secondaryPriority != null
     val targetCard2Height = if (card2Expanded && showSecondaryCard) {
-        val baseH = if (secondaryPriority == IslandPriority.SCREEN_RECORDING) 115.dp else 180.dp
+        val baseH = when (secondaryPriority) {
+            IslandPriority.SCREEN_RECORDING -> 115.dp
+            IslandPriority.POP_NOTIFICATION -> notifBaseHeight
+            IslandPriority.PROGRESS -> 165.dp
+            IslandPriority.FLASHLIGHT -> 205.dp
+            else -> 180.dp
+        }
         baseH * settings.expandedScale
     } else 0.dp
     val targetCard2Alpha = if (card2Expanded && showSecondaryCard) 1f else 0f
@@ -403,7 +564,7 @@ fun IslandOverlayRoot(
     val bubbleGap = 6.dp
     val restingBubbleCenterX = compactMainHalf + bubbleGap + (bubbleSize / 2f)
 
-    val shouldEmergeSecondary = !isCharging && isDual && !isExpanded && isOccupied
+    val shouldEmergeSecondary = !isCharging && !isUnlock && !isBluetooth && isDual && !isExpanded && isOccupied
     var secondaryBubbleEmerged by remember { mutableStateOf(false) }
     LaunchedEffect(shouldEmergeSecondary) {
         if (shouldEmergeSecondary) {
@@ -432,10 +593,18 @@ fun IslandOverlayRoot(
         )
     }
 
-    val targetTopOffset = if (isExpanded && !isCharging) {
+    val targetHorizontalOffset = if (isExpanded && !isCharging && !isUnlock && !isBluetooth) {
+        0.dp
+    } else if (!isCharging && !isUnlock && !isBluetooth) {
+        settings.horizontalOffsetDp.dp
+    } else {
+        0.dp
+    }
+
+    val targetTopOffset = if (isExpanded && !isCharging && !isUnlock && !isBluetooth) {
         (settings.topOffsetDp + 52).dp // Sits way below initial position (comfortably below status bar) when expanded!
     } else {
-        settings.topOffsetDp.dp // Docks right over the punch hole when minimised or charging
+        settings.topOffsetDp.dp // Docks right over the punch hole when minimised or charging/unlock/bluetooth
     }
 
     val targetCardSpacing = if (isExpanded && showSecondaryCard) 10.dp else 0.dp
@@ -448,6 +617,7 @@ fun IslandOverlayRoot(
     val animatedCard2Alpha by animateFloatAsState(targetValue = targetCard2Alpha, animationSpec = sizeAnimSpecFloat, label = "card2Alpha")
     val animatedCard2OffsetY by animateDpAsState(targetValue = targetCard2OffsetY, animationSpec = sizeAnimSpecDp, label = "card2OffsetY")
     val animatedBubbleOffsetX by animateDpAsState(targetValue = targetBubbleOffsetX, animationSpec = bubbleOffsetAnimSpec, label = "bubbleOffsetX")
+    val animatedHorizontalOffset by animateDpAsState(targetValue = targetHorizontalOffset, animationSpec = positionAnimSpecDp, label = "horizontalOffset")
     val animatedTopOffset by animateDpAsState(targetValue = targetTopOffset, animationSpec = positionAnimSpecDp, label = "topOffset")
     val animatedCardSpacing by animateDpAsState(targetValue = targetCardSpacing, animationSpec = sizeAnimSpecDp, label = "cardSpacing")
 
@@ -543,13 +713,13 @@ fun IslandOverlayRoot(
             )
         }
 
-        // Expanded Cards Container: Positioned at animated top offset (slides down to (settings.topOffsetDp + 52).dp)
-        if (expandProgress > 0.001f || isExpanded || animatedCard1Width > 1.dp) {
+        // Expanded Cards Container: Positioned at animated top and horizontal offset
+        if (expandProgress > 0.001f || isExpanded) {
             Box(
                 modifier = Modifier
                     .offset {
                         IntOffset(
-                            x = 0,
+                            x = animatedHorizontalOffset.roundToPx(),
                             y = animatedTopOffset.roundToPx()
                         )
                     },
@@ -559,7 +729,7 @@ fun IslandOverlayRoot(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(animatedCardSpacing),
-                    modifier = if (isExpanded) {
+                    modifier = if (isExpanded && primaryPriority != IslandPriority.FLASHLIGHT) {
                         Modifier.pointerInput(Unit) {
                             detectVerticalDragGestures { _, dragAmount ->
                                 if (dragAmount < -15f) {
@@ -571,7 +741,7 @@ fun IslandOverlayRoot(
                     } else Modifier
                 ) {
                     // Card 1: Primary Expanded Card
-                    if (animatedCard1Width > 1.dp) {
+                    if (animatedCard1Width > 1.dp && (expandProgress > 0.001f || isExpanded)) {
                         Box(
                             modifier = Modifier
                                 .offset { IntOffset(animatedCard1OffsetX.roundToInt(), 0) }
@@ -612,11 +782,19 @@ fun IslandOverlayRoot(
                                                                 }
                                                             }
                                                         }
-                                                        IslandPriority.POP_NOTIFICATION,
-                                                        IslandPriority.PROGRESS -> {
+                                                        IslandPriority.POP_NOTIFICATION -> {
                                                             if (abs(card1OffsetX) > threshold) {
                                                                 triggerHaptic()
                                                                 val dismissed = IslandStateManager.dismissCurrentNotification()
+                                                                if (dismissed && activeCount <= 1) {
+                                                                    IslandStateManager.collapse()
+                                                                }
+                                                            }
+                                                        }
+                                                        IslandPriority.PROGRESS -> {
+                                                            if (abs(card1OffsetX) > threshold) {
+                                                                triggerHaptic()
+                                                                val dismissed = IslandStateManager.dismissProgress()
                                                                 if (dismissed && activeCount <= 1) {
                                                                     IslandStateManager.collapse()
                                                                 }
@@ -645,21 +823,47 @@ fun IslandOverlayRoot(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Subtle ambient gradient background ONLY in the expanded media player card
-                            if (isExpanded && primaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    mediaAccentColor.copy(alpha = 0.35f * expandProgress),
-                                                    mediaAccentColor.copy(alpha = 0.12f * expandProgress),
-                                                    Color.Transparent
-                                                )
+                            // Subtle ambient gradient background for media player or flashlight
+                            if (isExpanded) {
+                                val ambientBrush = when {
+                                    primaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent -> {
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                mediaAccentColor.copy(alpha = 0.35f * expandProgress),
+                                                mediaAccentColor.copy(alpha = 0.12f * expandProgress),
+                                                Color.Transparent
                                             )
                                         )
-                                )
+                                    }
+                                    primaryPriority == IslandPriority.FLASHLIGHT -> {
+                                        val blurpleTint = Color(0xFFD2D6FF)
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                Color.Transparent,
+                                                blurpleTint.copy(alpha = 0.06f * expandProgress),
+                                                blurpleTint.copy(alpha = 0.20f * expandProgress)
+                                            )
+                                        )
+                                    }
+                                    primaryPriority == IslandPriority.SCREEN_RECORDING -> {
+                                        val redTint = Color(0xFFFF453A)
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                redTint.copy(alpha = 0.16f * expandProgress),
+                                                redTint.copy(alpha = 0.05f * expandProgress),
+                                                Color.Transparent
+                                            )
+                                        )
+                                    }
+                                    else -> null
+                                }
+                                if (ambientBrush != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(ambientBrush)
+                                    )
+                                }
                             }
 
                             // Expanded Card 1 Content (e.g. Media Player or Primary Notification)
@@ -673,7 +877,10 @@ fun IslandOverlayRoot(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(20.dp)
+                                        .padding(
+                                            horizontal = if (primaryPriority == IslandPriority.FLASHLIGHT) 16.dp else 20.dp,
+                                            vertical = if (primaryPriority == IslandPriority.FLASHLIGHT) 12.dp else if (primaryPriority == IslandPriority.POP_NOTIFICATION) 16.dp else 20.dp
+                                        )
                                         .graphicsLayer {
                                             alpha = expandedAlpha
                                             scaleX = 0.94f + (0.06f * expandedAlpha)
@@ -683,8 +890,10 @@ fun IslandOverlayRoot(
                                     ExpandedCardContent(
                                         priority = primaryPriority,
                                         media = currentMedia,
-                                        notification = currentNotif,
+                                        notification = if (primaryPriority == IslandPriority.PROGRESS) currentProgress else currentNotif,
                                         recording = recording,
+                                        flashlightLevel = flashlightLevel,
+                                        maxFlashlightLevel = maxFlashlightLevel,
                                         onCollapse = {
                                             triggerHaptic()
                                             IslandStateManager.collapse()
@@ -736,11 +945,16 @@ fun IslandOverlayRoot(
                                                                 IslandStateManager.dismissMedia()
                                                             }
                                                         }
-                                                        IslandPriority.POP_NOTIFICATION,
-                                                        IslandPriority.PROGRESS -> {
+                                                        IslandPriority.POP_NOTIFICATION -> {
                                                             if (abs(card2OffsetX) > threshold) {
                                                                 triggerHaptic()
                                                                 IslandStateManager.dismissCurrentNotification()
+                                                            }
+                                                        }
+                                                        IslandPriority.PROGRESS -> {
+                                                            if (abs(card2OffsetX) > threshold) {
+                                                                triggerHaptic()
+                                                                IslandStateManager.dismissProgress()
                                                             }
                                                         }
                                                         else -> Unit
@@ -765,36 +979,72 @@ fun IslandOverlayRoot(
                                         }
                                     } else Modifier
                                 )
-                                .padding(20.dp)
                         ) {
-                            // Subtle ambient gradient background for secondary card if it's the media player
-                            if (isExpanded && secondaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    mediaAccentColor.copy(alpha = 0.35f * animatedCard2Alpha),
-                                                    mediaAccentColor.copy(alpha = 0.12f * animatedCard2Alpha),
-                                                    Color.Transparent
-                                                )
+                            // Subtle ambient gradient background for secondary card if it's the media player or flashlight
+                            if (isExpanded) {
+                                val ambientBrush = when {
+                                    secondaryPriority == IslandPriority.MEDIA && mediaAccentColor != Color.Transparent -> {
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                mediaAccentColor.copy(alpha = 0.35f * animatedCard2Alpha),
+                                                mediaAccentColor.copy(alpha = 0.12f * animatedCard2Alpha),
+                                                Color.Transparent
                                             )
                                         )
-                                )
+                                    }
+                                    secondaryPriority == IslandPriority.FLASHLIGHT -> {
+                                        val blurpleTint = Color(0xFFD2D6FF)
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                Color.Transparent,
+                                                blurpleTint.copy(alpha = 0.06f * animatedCard2Alpha),
+                                                blurpleTint.copy(alpha = 0.20f * animatedCard2Alpha)
+                                            )
+                                        )
+                                    }
+                                    secondaryPriority == IslandPriority.SCREEN_RECORDING -> {
+                                        val redTint = Color(0xFFFF453A)
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                redTint.copy(alpha = 0.16f * animatedCard2Alpha),
+                                                redTint.copy(alpha = 0.05f * animatedCard2Alpha),
+                                                Color.Transparent
+                                            )
+                                        )
+                                    }
+                                    else -> null
+                                }
+                                if (ambientBrush != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(ambientBrush)
+                                    )
+                                }
                             }
 
                             if (animatedCard2Alpha > 0.15f && secondaryPriority != null) {
-                                ExpandedCardContent(
-                                    priority = secondaryPriority,
-                                    media = currentMedia,
-                                    notification = currentNotif,
-                                    recording = recording,
-                                    onCollapse = {
-                                        triggerHaptic()
-                                        IslandStateManager.collapse()
-                                    }
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(
+                                            horizontal = if (secondaryPriority == IslandPriority.FLASHLIGHT) 16.dp else 20.dp,
+                                            vertical = if (secondaryPriority == IslandPriority.FLASHLIGHT) 12.dp else if (secondaryPriority == IslandPriority.POP_NOTIFICATION) 16.dp else 20.dp
+                                        )
+                                ) {
+                                    ExpandedCardContent(
+                                        priority = secondaryPriority,
+                                        media = currentMedia,
+                                        notification = if (secondaryPriority == IslandPriority.PROGRESS) currentProgress else currentNotif,
+                                        recording = recording,
+                                        flashlightLevel = flashlightLevel,
+                                        maxFlashlightLevel = maxFlashlightLevel,
+                                        onCollapse = {
+                                            triggerHaptic()
+                                            IslandStateManager.collapse()
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -808,7 +1058,7 @@ fun IslandOverlayRoot(
             modifier = Modifier
                 .offset {
                     IntOffset(
-                        x = 0,
+                        x = animatedHorizontalOffset.roundToPx(),
                         y = settings.topOffsetDp.dp.roundToPx()
                     )
                 },
@@ -879,7 +1129,7 @@ fun IslandOverlayRoot(
                                 AuxiliaryBubbleContent(
                                     priority = secondaryPriority,
                                     media = currentMedia,
-                                    notification = currentNotif,
+                                    notification = if (secondaryPriority == IslandPriority.PROGRESS) currentProgress else currentNotif,
                                     recording = recording
                                 )
                             }
@@ -915,7 +1165,7 @@ fun IslandOverlayRoot(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) {
-                            if (!isExpanded && isOccupied) {
+                            if (!isExpanded && isOccupied && !isUnlock && !isBluetooth) {
                                 triggerHaptic()
                                 IslandStateManager.expand()
                             }
@@ -1006,6 +1256,96 @@ fun IslandOverlayRoot(
                                 )
                             }
                         }
+                    } else if (isUnlock || unlockContentAlpha > 0.01f) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp)
+                                .graphicsLayer { alpha = unlockContentAlpha },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left: Unlocked lock icon at the slight edge of the island
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LockOpen,
+                                    contentDescription = "Unlocked",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+
+                            // Center: 36dp deadzone strictly over camera cutout
+                            Spacer(modifier = Modifier.width(36.dp))
+
+                            // Right: Checkmark at the slight edge of the island with smooth bounce growth animation
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                if (unlockCheckmarkAlpha > 0.01f) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Success",
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .graphicsLayer {
+                                                alpha = unlockCheckmarkAlpha
+                                                scaleX = unlockCheckmarkScale
+                                                scaleY = unlockCheckmarkScale
+                                            }
+                                            .size(19.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else if (isBluetooth || bluetoothContentAlpha > 0.01f) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp)
+                                .graphicsLayer { alpha = bluetoothContentAlpha },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left: Bluetooth icon at the slight edge of the island
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bluetooth,
+                                    contentDescription = "Bluetooth",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+
+                            // Center: 36dp deadzone strictly over camera cutout
+                            Spacer(modifier = Modifier.width(36.dp))
+
+                            // Right: Checkmark at the slight edge of the island with smooth bounce growth animation
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                if (bluetoothCheckmarkAlpha > 0.01f) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Connected",
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .graphicsLayer {
+                                                alpha = bluetoothCheckmarkAlpha
+                                                scaleX = bluetoothCheckmarkScale
+                                                scaleY = bluetoothCheckmarkScale
+                                            }
+                                            .size(19.dp)
+                                    )
+                                }
+                            }
+                        }
                     } else if (compactAlpha > 0.01f && animatedCompactWidth > 24.dp) {
                         Box(
                             modifier = Modifier
@@ -1016,9 +1356,11 @@ fun IslandOverlayRoot(
                             CompactContent(
                                 priority = primaryPriority,
                                 media = currentMedia,
-                                notification = currentNotif,
+                                notification = if (primaryPriority == IslandPriority.PROGRESS) currentProgress else currentNotif,
                                 recording = recording,
-                                isCompactDual = isDual
+                                isCompactDual = isDual,
+                                flashlightLevel = flashlightLevel,
+                                maxFlashlightLevel = maxFlashlightLevel
                             )
                         }
                     }
@@ -1060,7 +1402,7 @@ fun IslandOverlayRoot(
                 // Sits at rightContentEdgeDp + parenthesisGap + extraShootDp.
                 // When emerging, curve shoots out slightly further from the island and settles back.
                 val bubbleRightEdge = animatedBubbleOffsetX + (bubbleSize / 2f)
-                val rightContentEdgeDp = if (!isCharging && animatedBubbleOffsetX > 1.dp) {
+                val rightContentEdgeDp = if (!isCharging && !isUnlock && !isBluetooth && animatedBubbleOffsetX > 1.dp) {
                     maxOf(animatedCompactWidth / 2f, bubbleRightEdge)
                 } else {
                     animatedCompactWidth / 2f
@@ -1240,6 +1582,33 @@ fun AuxiliaryBubbleContent(
                 EqualizerVisualizer(isPlaying = media?.isPlaying == true)
             }
         }
+        IslandPriority.FLASHLIGHT -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.45f),
+                                    Color.White.copy(alpha = 0.15f),
+                                    Color.Transparent
+                                )
+                            ),
+                            shape = CircleShape
+                        )
+                )
+                Icon(
+                    imageVector = Icons.Default.FlashlightOn,
+                    contentDescription = "Flashlight",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
         else -> Unit
     }
 }
@@ -1250,7 +1619,9 @@ fun CompactContent(
     media: MediaInfo?,
     notification: NotificationInfo?,
     recording: ScreenRecordingState,
-    isCompactDual: Boolean = false
+    isCompactDual: Boolean = false,
+    flashlightLevel: Int = 1,
+    maxFlashlightLevel: Int = 1
 ) {
     Row(
         modifier = Modifier
@@ -1267,6 +1638,34 @@ fun CompactContent(
             when (priority) {
                 IslandPriority.SCREEN_RECORDING -> {
                     PulsingRecordingDot()
+                }
+
+                IslandPriority.FLASHLIGHT -> {
+                    Box(
+                        modifier = Modifier.offset(x = (-4).dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.50f),
+                                            Color.White.copy(alpha = 0.16f),
+                                            Color.Transparent
+                                        )
+                                    ),
+                                    shape = CircleShape
+                                )
+                        )
+                        Icon(
+                            imageVector = Icons.Default.FlashlightOn,
+                            contentDescription = "Flashlight",
+                            tint = Color.White,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
                 }
 
                 IslandPriority.POP_NOTIFICATION -> {
@@ -1365,6 +1764,8 @@ fun CompactContent(
                     )
                 }
 
+                IslandPriority.FLASHLIGHT -> Unit
+
                 IslandPriority.POP_NOTIFICATION -> {
                     Text(
                         text = notification?.title ?: "Notification",
@@ -1421,6 +1822,8 @@ fun ExpandedCardContent(
     media: MediaInfo?,
     notification: NotificationInfo?,
     recording: ScreenRecordingState,
+    flashlightLevel: Int = 1,
+    maxFlashlightLevel: Int = 1,
     onCollapse: () -> Unit
 ) {
     when (priority) {
@@ -1436,11 +1839,271 @@ fun ExpandedCardContent(
         IslandPriority.MEDIA -> {
             ExpandedMediaView(media, onCollapse)
         }
+        IslandPriority.FLASHLIGHT -> {
+            ExpandedFlashlightView(
+                level = flashlightLevel,
+                onSetLevel = { newLevel ->
+                    IslandStateManager.setFlashlightBrightness(newLevel)
+                },
+                onTurnOff = {
+                    IslandStateManager.turnOffFlashlight()
+                },
+                onCollapse = onCollapse
+            )
+        }
         IslandPriority.IDLE -> {
             LaunchedEffect(Unit) {
                 onCollapse()
             }
             ExpandedIdleView(onCollapse)
+        }
+    }
+}
+
+@Composable
+fun ExpandedFlashlightView(
+    level: Int,
+    onSetLevel: (Int) -> Unit,
+    onTurnOff: () -> Unit,
+    onCollapse: () -> Unit
+) {
+    val view = LocalView.current
+
+    // Current brightness level 1..4
+    var currentLevel by remember(level) { mutableIntStateOf(level.coerceIn(1, 4)) }
+    LaunchedEffect(level) {
+        currentLevel = level.coerceIn(1, 4)
+    }
+
+    val currentLevelState = rememberUpdatedState(currentLevel)
+    val onSetLevelState = rememberUpdatedState(onSetLevel)
+
+    // Animated fraction for the light beam height (1 -> 0.25f, 4 -> 1.0f)
+    val targetFraction = (currentLevel / 4f)
+    val animatedFraction by animateFloatAsState(
+        targetValue = targetFraction,
+        animationSpec = spring(
+            dampingRatio = 0.8f,
+            stiffness = 450f
+        ),
+        label = "flashlightBeamFraction"
+    )
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Upper section: The light-beam triangular blur vertical slider
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val h = size.height.toFloat()
+                        if (h > 0) {
+                            val relY = (down.position.y / h).coerceIn(0f, 1f)
+                            val newLevel = (((1f - relY) * 3.999f).toInt() + 1).coerceIn(1, 4)
+                            if (newLevel != currentLevelState.value) {
+                                currentLevel = newLevel
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                onSetLevelState.value(newLevel)
+                            }
+                        }
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            if (!change.pressed) break
+                            change.consume()
+                            val currentH = size.height.toFloat()
+                            if (currentH > 0) {
+                                val relY = (change.position.y / currentH).coerceIn(0f, 1f)
+                                val newLevel = (((1f - relY) * 3.999f).toInt() + 1).coerceIn(1, 4)
+                                if (newLevel != currentLevelState.value) {
+                                    currentLevel = newLevel
+                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    onSetLevelState.value(newLevel)
+                                }
+                            }
+                        }
+                    }
+                },
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 4.dp, bottom = 0.dp)
+                    .blur(radius = 8.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+            ) {
+                val w = size.width
+                val h = size.height
+                val centerX = w / 2f
+
+                val blurpleTint = Color(0xFFD2D6FF)
+
+                // Geometry:
+                // Maximum widths at full brightness (level 4):
+                val maxSecTopHalfW = (w * 0.18f).coerceAtMost(52.dp.toPx())
+                val secBaseHalfW = 7.dp.toPx()
+
+                val maxPrimTopHalfW = (w * 0.09f).coerceAtMost(26.dp.toPx())
+                val primBaseHalfW = 3.5.dp.toPx()
+
+                // Width expands dynamically with brightness, maxing out at current width for level 4!
+                val widthFactor = 0.35f + 0.65f * animatedFraction
+                val currentSecTopHalfW = maxSecTopHalfW * widthFactor
+                val currentPrimTopHalfW = maxPrimTopHalfW * widthFactor
+
+                // 1. Background guide cone: subtle blurple tint, fades away at the top!
+                val guideOuterPath = Path().apply {
+                    moveTo(centerX - secBaseHalfW - 3.dp.toPx(), h)
+                    lineTo(centerX - maxSecTopHalfW - 6.dp.toPx(), 0f)
+                    quadraticTo(centerX, -4.dp.toPx(), centerX + maxSecTopHalfW + 6.dp.toPx(), 0f)
+                    lineTo(centerX + secBaseHalfW + 3.dp.toPx(), h)
+                    close()
+                }
+                drawPath(
+                    path = guideOuterPath,
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.0f to Color.Transparent, // Fades away at the top!
+                            0.20f to blurpleTint.copy(alpha = 0.03f),
+                            0.60f to blurpleTint.copy(alpha = 0.05f),
+                            1.0f to Color.Transparent
+                        ),
+                        startY = 0f,
+                        endY = h
+                    )
+                )
+
+                val guidePath = Path().apply {
+                    moveTo(centerX - secBaseHalfW, h)
+                    lineTo(centerX - maxSecTopHalfW, 0f)
+                    quadraticTo(centerX, -4.dp.toPx(), centerX + maxSecTopHalfW, 0f)
+                    lineTo(centerX + secBaseHalfW, h)
+                    close()
+                }
+                drawPath(
+                    path = guidePath,
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.0f to Color.Transparent, // Fades away at the top!
+                            0.18f to blurpleTint.copy(alpha = 0.08f),
+                            0.55f to blurpleTint.copy(alpha = 0.13f),
+                            1.0f to blurpleTint.copy(alpha = 0.04f)
+                        ),
+                        startY = 0f,
+                        endY = h
+                    )
+                )
+
+                // 2. Active illuminated beams filling up to animatedFraction (1..4)
+                val activeH = h * animatedFraction
+                val activeTopY = h - activeH
+                val activeSecTopHalfW = secBaseHalfW + (currentSecTopHalfW - secBaseHalfW) * animatedFraction
+                val activePrimTopHalfW = primBaseHalfW + (currentPrimTopHalfW - primBaseHalfW) * animatedFraction
+
+                // Dynamic fade distance at top: fades away at top, but fade reduces when less bright
+                val fadeLength = (28.dp.toPx() * animatedFraction).coerceAtMost(activeH * 0.40f).coerceAtLeast(4.dp.toPx())
+                val fadeStop = (fadeLength / activeH).coerceIn(0.04f, 0.45f)
+
+                // Diffused outer atmospheric halo
+                val haloSpread = 5.dp.toPx() * animatedFraction
+                val haloPath = Path().apply {
+                    moveTo(centerX - secBaseHalfW - 2.dp.toPx(), h)
+                    lineTo(centerX - activeSecTopHalfW - haloSpread, activeTopY)
+                    quadraticTo(centerX, activeTopY - 4.dp.toPx(), centerX + activeSecTopHalfW + haloSpread, activeTopY)
+                    lineTo(centerX + secBaseHalfW + 2.dp.toPx(), h)
+                    close()
+                }
+                drawPath(
+                    path = haloPath,
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.0f to Color.Transparent,
+                            fadeStop to Color.White.copy(alpha = 0.12f * animatedFraction),
+                            1.0f to Color.Transparent
+                        ),
+                        startY = activeTopY,
+                        endY = h
+                    )
+                )
+
+                // 3. Secondary beam: slightly less bright, same width as now (realistic spill beam)
+                val secBeamPath = Path().apply {
+                    moveTo(centerX - secBaseHalfW, h)
+                    lineTo(centerX - activeSecTopHalfW, activeTopY)
+                    quadraticTo(centerX, activeTopY - 3.dp.toPx(), centerX + activeSecTopHalfW, activeTopY)
+                    lineTo(centerX + secBaseHalfW, h)
+                    close()
+                }
+                val secIntensity = 0.32f + 0.22f * animatedFraction
+                drawPath(
+                    path = secBeamPath,
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.0f to Color.Transparent, // Fades away at the top!
+                            fadeStop to Color.White.copy(alpha = 0.35f * secIntensity),
+                            0.60f to Color.White.copy(alpha = 0.24f * secIntensity),
+                            1.0f to Color.White.copy(alpha = 0.08f * secIntensity)
+                        ),
+                        startY = activeTopY,
+                        endY = h
+                    )
+                )
+
+                // 4. Primary core beam: half as thin again, brilliant hotspot, fades away at the top
+                val primBeamPath = Path().apply {
+                    moveTo(centerX - primBaseHalfW, h)
+                    lineTo(centerX - activePrimTopHalfW, activeTopY)
+                    quadraticTo(centerX, activeTopY - 2.dp.toPx(), centerX + activePrimTopHalfW, activeTopY)
+                    lineTo(centerX + primBaseHalfW, h)
+                    close()
+                }
+                val primIntensity = 0.70f + 0.30f * animatedFraction
+                drawPath(
+                    path = primBeamPath,
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.0f to Color.Transparent, // Fades away at the top!
+                            fadeStop to Color.White.copy(alpha = 0.96f * primIntensity),
+                            0.65f to Color.White.copy(alpha = 0.78f * primIntensity),
+                            1.0f to Color.White.copy(alpha = 0.45f * primIntensity)
+                        ),
+                        startY = activeTopY,
+                        endY = h
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Bottom section: Large centered flashlight icon (NO dark circle background, NO radial glow)
+        // Tapping on this icon turns the flashlight off!
+        Box(
+            modifier = Modifier
+                .padding(bottom = 8.dp)
+                .size(64.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    onTurnOff()
+                    onCollapse()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.FlashlightOn,
+                contentDescription = "Turn off flashlight",
+                tint = Color.White,
+                modifier = Modifier.size(46.dp)
+            )
         }
     }
 }
@@ -1820,20 +2483,22 @@ fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> 
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            if (!notification?.text.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
 
-            Text(
-                text = notification?.text ?: "",
-                color = Color(0xFFF4F4F5),
-                fontSize = 15.sp,
-                lineHeight = 20.sp,
-                fontWeight = FontWeight.Normal,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { openNotification() }
-            )
+                Text(
+                    text = notification?.text ?: "",
+                    color = Color(0xFFF4F4F5),
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.Normal,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { openNotification() }
+                )
+            }
         }
 
         // Action Section: Either Inline Reply Row or Action Buttons
@@ -2002,7 +2667,7 @@ fun ExpandedNotificationView(notification: NotificationInfo?, onCollapse: () -> 
                         onClick = item.onClick,
                         modifier = Modifier
                             .weight(1f)
-                            .height(42.dp),
+                            .height(38.dp),
                         shape = shape,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
@@ -2133,7 +2798,7 @@ fun ExpandedProgressView(notification: NotificationInfo?, onCollapse: () -> Unit
 
                 IconButton(
                     onClick = {
-                        IslandStateManager.dismissCurrentNotification()
+                        IslandStateManager.dismissProgress()
                         onCollapse()
                     },
                     modifier = Modifier.size(28.dp)
@@ -2288,24 +2953,16 @@ fun ExpandedRecordingView(recording: ScreenRecordingState, onCollapse: () -> Uni
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.Start
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PulsingRecordingDot()
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Screen recording",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
+            PulsingRecordingDot(modifier = Modifier.size(11.dp))
+            Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = timerText,
-                color = Color(0xFFE5E5EA),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
             )
         }
 

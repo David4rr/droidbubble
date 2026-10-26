@@ -1,8 +1,10 @@
 package com.droidbubble.app.service
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.util.Log
 import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
@@ -48,6 +50,10 @@ import com.droidbubble.app.R
 import com.droidbubble.app.data.SettingsRepository
 import com.droidbubble.app.island.IslandOverlayRoot
 import com.droidbubble.app.island.IslandStateManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.os.Handler
+import android.os.Looper
 import com.droidbubble.app.model.IslandSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +61,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class IslandOverlayService : Service() {
 
@@ -98,6 +106,11 @@ class IslandOverlayService : Service() {
 
     private val lifecycleOwner = CustomLifecycleOwner()
     private var currentSettings = IslandSettings()
+
+    private var cameraManager: CameraManager? = null
+    private var torchCameraId: String? = null
+    private var maxTorchStrengthLevel: Int = 1
+    private var torchCallback: CameraManager.TorchCallback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -177,7 +190,19 @@ class IslandOverlayService : Service() {
                     IslandStateManager.updateMedia(null)
                     IslandStateManager.updateNotification(null)
                     IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
+                    IslandStateManager.updateFlashlightState(false)
                     IslandStateManager.collapse()
+                }
+                "com.droidbubble.app.ACTION_SIMULATE_UNLOCK" -> {
+                    IslandStateManager.triggerUnlockEvent()
+                }
+                "com.droidbubble.app.ACTION_SIMULATE_BLUETOOTH" -> {
+                    IslandStateManager.triggerBluetoothEvent()
+                }
+                "com.droidbubble.app.ACTION_SIMULATE_FLASHLIGHT" -> {
+                    val enabled = intent.getBooleanExtra("enabled", true)
+                    val level = intent.getIntExtra("level", 3)
+                    IslandStateManager.updateFlashlightState(enabled, level.coerceIn(1, 4), 4)
                 }
                 "com.droidbubble.app.ACTION_SIMULATE_CHARGING" -> {
                     val pct = intent.getIntExtra("percentage", 85)
@@ -195,6 +220,32 @@ class IslandOverlayService : Service() {
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action ?: return
+            Log.d("IslandOverlayService", "System broadcast received: $action")
+            if (action == Intent.ACTION_USER_PRESENT) {
+                IslandStateManager.triggerUnlockEvent()
+                return
+            }
+            if (action == Intent.ACTION_SCREEN_ON) {
+                val km = context?.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                if (km != null && !km.isKeyguardLocked) {
+                    IslandStateManager.triggerUnlockEvent()
+                }
+                return
+            }
+            if (action == android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED) {
+                IslandStateManager.triggerBluetoothEvent()
+                return
+            }
+            if (action == "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" ||
+                action == "android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED" ||
+                action == "android.bluetooth.adapter.action.CONNECTION_STATE_CHANGED"
+            ) {
+                val state = intent.getIntExtra(android.bluetooth.BluetoothProfile.EXTRA_STATE, -1)
+                if (state == android.bluetooth.BluetoothProfile.STATE_CONNECTED) {
+                    IslandStateManager.triggerBluetoothEvent()
+                    return
+                }
+            }
             if (action == Intent.ACTION_POWER_CONNECTED || action == "android.os.action.CHARGING") {
                 val ctx = context ?: return
                 val batteryIntent = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -222,18 +273,118 @@ class IslandOverlayService : Service() {
         }
     }
 
+    private fun initCameraTorch() {
+        try {
+            val cm = getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
+            cameraManager = cm
+            for (id in cm.cameraIdList) {
+                val chars = cm.getCameraCharacteristics(id)
+                val hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                val facing = chars.get(CameraCharacteristics.LENS_FACING)
+                if (hasFlash && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    torchCameraId = id
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        maxTorchStrengthLevel = chars.get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL) ?: 1
+                    }
+                    break
+                }
+            }
+            if (torchCameraId == null) {
+                for (id in cm.cameraIdList) {
+                    val chars = cm.getCameraCharacteristics(id)
+                    if (chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true) {
+                        torchCameraId = id
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            maxTorchStrengthLevel = chars.get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL) ?: 1
+                        }
+                        break
+                    }
+                }
+            }
+
+            IslandStateManager.onSetFlashlightLevel = { level1to4 ->
+                torchCameraId?.let { id ->
+                    runCatching {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && maxTorchStrengthLevel > 1) {
+                            val scaled = if (maxTorchStrengthLevel == 4) {
+                                level1to4
+                            } else {
+                                ((level1to4 - 1f) / 3f * (maxTorchStrengthLevel - 1) + 1).roundToInt().coerceIn(1, maxTorchStrengthLevel)
+                            }
+                            cm.turnOnTorchWithStrengthLevel(id, scaled)
+                        } else {
+                            cm.setTorchMode(id, true)
+                        }
+                    }
+                }
+            }
+
+            IslandStateManager.onTurnOffFlashlight = {
+                torchCameraId?.let { id ->
+                    runCatching {
+                        cm.setTorchMode(id, false)
+                    }
+                }
+            }
+
+            val cb = object : CameraManager.TorchCallback() {
+                override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                    super.onTorchModeChanged(cameraId, enabled)
+                    if (torchCameraId == null && enabled) {
+                        torchCameraId = cameraId
+                    }
+                    if (cameraId == torchCameraId || torchCameraId == null) {
+                        IslandStateManager.updateFlashlightState(
+                            enabled = enabled,
+                            maxLevel = 4
+                        )
+                    }
+                }
+
+                override fun onTorchStrengthLevelChanged(cameraId: String, newStrengthLevel: Int) {
+                    super.onTorchStrengthLevelChanged(cameraId, newStrengthLevel)
+                    if (cameraId == torchCameraId) {
+                        val level1to4 = if (maxTorchStrengthLevel <= 1) {
+                            1
+                        } else if (maxTorchStrengthLevel == 4) {
+                            newStrengthLevel.coerceIn(1, 4)
+                        } else {
+                            ((newStrengthLevel - 1f) / (maxTorchStrengthLevel - 1).toFloat() * 3f + 1).roundToInt().coerceIn(1, 4)
+                        }
+                        IslandStateManager.updateFlashlightLevel(level1to4)
+                    }
+                }
+            }
+            torchCallback = cb
+            cm.registerTorchCallback(cb, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         serviceInstance = this
         settingsRepository = SettingsRepository(this)
+        currentSettings = runBlocking(Dispatchers.IO) {
+            try {
+                settingsRepository.settingsFlow.first()
+            } catch (_: Exception) {
+                IslandSettings()
+            }
+        }
         lifecycleOwner.performRestore(null)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
         createNotificationChannel()
+        initCameraTorch()
 
         val filter = IntentFilter().apply {
+            addAction("com.droidbubble.app.ACTION_SIMULATE_UNLOCK")
+            addAction("com.droidbubble.app.ACTION_SIMULATE_BLUETOOTH")
+            addAction("com.droidbubble.app.ACTION_SIMULATE_FLASHLIGHT")
             addAction("com.droidbubble.app.ACTION_SIMULATE_CHARGING")
             addAction("com.droidbubble.app.ACTION_SIMULATE_MEDIA")
             addAction("com.droidbubble.app.ACTION_SIMULATE_NOTIFICATION")
@@ -252,9 +403,15 @@ class IslandOverlayService : Service() {
         val powerFilter = IntentFilter().apply {
             addAction(Intent.ACTION_POWER_CONNECTED)
             addAction("android.os.action.CHARGING")
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction("android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED")
+            addAction("android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED")
+            addAction("android.bluetooth.adapter.action.CONNECTION_STATE_CHANGED")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(powerReceiver, powerFilter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(powerReceiver, powerFilter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(powerReceiver, powerFilter)
         }
@@ -355,7 +512,8 @@ class IslandOverlayService : Service() {
         val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
                 (if (IslandStateManager.isNotificationActive) 1 else 0) +
                 (if (IslandStateManager.isMediaActive) 1 else 0) +
-                (if (IslandStateManager.isProgressActive) 1 else 0)
+                (if (IslandStateManager.isProgressActive) 1 else 0) +
+                (if (IslandStateManager.isFlashlightActive) 1 else 0)
         val isDual = !isCharging && activeCount >= 2
 
         val totalWidthDp = if (isCharging) {
@@ -370,7 +528,7 @@ class IslandOverlayService : Service() {
         }
 
         val initialWidth = if (isOccupied) {
-            (totalWidthDp * density).toInt()
+            ((totalWidthDp + 2f * kotlin.math.abs(currentSettings.horizontalOffsetDp)) * density).toInt()
         } else 1
         val initialHeight = if (isOccupied) ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt() else 1
         val initialFlags = if (isOccupied) flags else (flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
@@ -392,7 +550,7 @@ class IslandOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = if (isOccupied && !isCharging) (currentSettings.horizontalOffsetDp * density).toInt() else 0
+            x = 0
             y = 0
             windowAnimations = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -436,17 +594,19 @@ class IslandOverlayService : Service() {
         serviceScope.launch {
             kotlinx.coroutines.flow.combine(
                 IslandStateManager.isExpanded,
-                IslandStateManager.activeMedia,
-                IslandStateManager.activeNotification,
-                IslandStateManager.screenRecordingState,
-                IslandStateManager.activeCharging
-            ) { expanded, media, notif, rec, charging ->
-                Triple(
-                    expanded,
-                    charging != null,
-                    (rec.isRecording || notif != null || (media != null && media.title.isNotBlank()))
-                )
-            }.collectLatest { (expanded, _, _) ->
+                kotlinx.coroutines.flow.combine(
+                    IslandStateManager.activeMedia,
+                    IslandStateManager.activeNotification,
+                    IslandStateManager.activeProgress,
+                    IslandStateManager.screenRecordingState
+                ) { _, _, _, _ -> Unit },
+                kotlinx.coroutines.flow.combine(
+                    IslandStateManager.activeCharging,
+                    IslandStateManager.isUnlocked,
+                    IslandStateManager.isBluetoothConnected,
+                    IslandStateManager.isFlashlightOn
+                ) { _, _, _, _ -> Unit }
+            ) { expanded, _, _ -> expanded }.collectLatest { expanded ->
                 updateWindowState(expanded)
             }
         }
@@ -521,16 +681,22 @@ class IslandOverlayService : Service() {
             runCatching { windowManager?.updateViewLayout(view, params) }
         } else {
             val isCharging = IslandStateManager.isChargingActive
+            val isUnlock = IslandStateManager.isUnlockActive
+            val isBluetooth = IslandStateManager.isBluetoothActive
             val isOccupied = IslandStateManager.isOccupied
             val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
                     (if (IslandStateManager.isNotificationActive) 1 else 0) +
                     (if (IslandStateManager.isMediaActive) 1 else 0) +
-                    (if (IslandStateManager.isProgressActive) 1 else 0)
-            val isDual = !isCharging && activeCount >= 2
+                    (if (IslandStateManager.isProgressActive) 1 else 0) +
+                    (if (IslandStateManager.isFlashlightActive) 1 else 0)
+            val isDual = !isCharging && !isUnlock && !isBluetooth && activeCount >= 2
 
             val totalWidthDp = if (isCharging) {
                 val chargingPillWidth = (currentSettings.widthDp + 20f).coerceAtLeast(140f)
                 chargingPillWidth + 44f
+            } else if (isUnlock || isBluetooth) {
+                val pillWidth = (currentSettings.widthDp * 0.82f).coerceAtLeast(108f)
+                pillWidth + 44f
             } else if (isDual) {
                 val mainHalf = (currentSettings.widthDp * 0.74f) / 2f
                 val rightEdge = mainHalf + 8f + currentSettings.heightDp + 22f
@@ -542,8 +708,8 @@ class IslandOverlayService : Service() {
             fun applyCompactBounds() {
                 collapseJob?.cancel()
                 if (isOccupied) {
-                    params.width = (totalWidthDp * density).toInt()
-                    params.x = (currentSettings.horizontalOffsetDp * density).toInt()
+                    params.width = ((totalWidthDp + 2f * kotlin.math.abs(currentSettings.horizontalOffsetDp)) * density).toInt()
+                    params.x = 0
                     params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt()
                     params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                     params.y = 0
@@ -561,7 +727,7 @@ class IslandOverlayService : Service() {
                 }
             }
 
-            if (isCharging) {
+            if (isCharging || isUnlock || isBluetooth) {
                 isCollapsing = false
                 collapseJob?.cancel()
             } else if (isCollapsing) {
@@ -618,6 +784,10 @@ class IslandOverlayService : Service() {
         }
         runCatching { unregisterReceiver(debugReceiver) }
         runCatching { unregisterReceiver(powerReceiver) }
+        torchCallback?.let { cb ->
+            runCatching { cameraManager?.unregisterTorchCallback(cb) }
+        }
+        torchCallback = null
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

@@ -541,11 +541,15 @@ class NotificationReceiverService : NotificationListenerService() {
             return
         }
 
-        // 3. Extract live progress tracking (e.g. Google Play Store, downloads, transfers)
+        // 3. Extract live progress tracking (e.g. Google Play Store, downloads, transfers, navigation)
         val progress = extras.getInt(Notification.EXTRA_PROGRESS, -1)
         val maxProgress = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
         val isIndeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
-        val hasProgress = maxProgress > 0 || isIndeterminate || (progress >= 0 && maxProgress > 0)
+        val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 || sbn.isOngoing
+        val isNavCategory = notification.category == Notification.CATEGORY_NAVIGATION
+        val isNavApp = packageName == "com.google.android.apps.maps" || packageName == "com.waze" || packageName.contains("maps")
+        val isNavigation = (isNavCategory || isNavApp) && isOngoing
+        val hasProgress = maxProgress > 0 || isIndeterminate || (progress >= 0 && maxProgress > 0) || isNavigation
 
         // Separate check: live progress notifications vs normal notification alerts
         if (hasProgress) {
@@ -554,8 +558,7 @@ class NotificationReceiverService : NotificationListenerService() {
             if (!currentSettings.showNotifications) return
         }
 
-        // Skip ongoing notifications UNLESS they report live progress (e.g. downloads)
-        val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
+        // Skip ongoing notifications UNLESS they report live progress (e.g. downloads, navigation)
         if (isOngoing && !hasProgress) return
 
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
@@ -605,11 +608,15 @@ class NotificationReceiverService : NotificationListenerService() {
             timestamp = sbn.postTime,
             progress = progress,
             maxProgress = maxProgress,
-            isIndeterminate = isIndeterminate,
+            isIndeterminate = isIndeterminate || (isNavigation && maxProgress <= 0),
             isOngoing = isOngoing
         )
 
-        IslandStateManager.updateNotification(notifInfo)
+        if (hasProgress) {
+            IslandStateManager.updateProgress(notifInfo)
+        } else {
+            IslandStateManager.updateNotification(notifInfo)
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -624,9 +631,7 @@ class NotificationReceiverService : NotificationListenerService() {
             activeResumeAction = null
             IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
         }
-        if (IslandStateManager.activeNotification.value?.key == sbn.key) {
-            IslandStateManager.updateNotification(null)
-        }
+        IslandStateManager.removeNotification(sbn.key)
     }
 
     private fun extractNotificationBitmap(notification: Notification, packageName: String): Bitmap? {

@@ -58,5 +58,6 @@ enum class IslandPriority {
     PROGRESS,
     POP_NOTIFICATION,
     MEDIA,
+    FLASHLIGHT,
     IDLE
 }

@@ -29,11 +29,22 @@ object IslandStateManager {
     private val _activeCharging = MutableStateFlow<ChargingInfo?>(null)
     val activeCharging: StateFlow<ChargingInfo?> = _activeCharging.asStateFlow()
 
+    private val _isUnlocked = MutableStateFlow(false)
+    val isUnlocked: StateFlow<Boolean> = _isUnlocked.asStateFlow()
+    private var unlockJob: Job? = null
+
+    private val _isBluetoothConnected = MutableStateFlow(false)
+    val isBluetoothConnected: StateFlow<Boolean> = _isBluetoothConnected.asStateFlow()
+    private var bluetoothJob: Job? = null
+
     private val _activeMedia = MutableStateFlow<MediaInfo?>(null)
     val activeMedia: StateFlow<MediaInfo?> = _activeMedia.asStateFlow()
 
     private val _activeNotification = MutableStateFlow<NotificationInfo?>(null)
     val activeNotification: StateFlow<NotificationInfo?> = _activeNotification.asStateFlow()
+
+    private val _activeProgress = MutableStateFlow<NotificationInfo?>(null)
+    val activeProgress: StateFlow<NotificationInfo?> = _activeProgress.asStateFlow()
 
     private val _screenRecordingState = MutableStateFlow(ScreenRecordingState())
     val screenRecordingState: StateFlow<ScreenRecordingState> = _screenRecordingState.asStateFlow()
@@ -76,11 +87,24 @@ object IslandStateManager {
     // Callback to send direct reply to notification
     var onSendReply: ((key: String, replyText: String) -> Unit)? = null
 
+    private val _isFlashlightOn = MutableStateFlow(false)
+    val isFlashlightOn: StateFlow<Boolean> = _isFlashlightOn.asStateFlow()
+
+    private val _flashlightLevel = MutableStateFlow(1)
+    val flashlightLevel: StateFlow<Int> = _flashlightLevel.asStateFlow()
+
+    private val _maxFlashlightLevel = MutableStateFlow(1)
+    val maxFlashlightLevel: StateFlow<Int> = _maxFlashlightLevel.asStateFlow()
+
+    // Callbacks for flashlight controls
+    var onSetFlashlightLevel: ((Int) -> Unit)? = null
+    var onTurnOffFlashlight: (() -> Unit)? = null
+
     val isRecordingActive: Boolean
         get() = _screenRecordingState.value.isRecording
 
     val isNotificationActive: Boolean
-        get() = _activeNotification.value != null && _activeNotification.value?.hasProgress != true
+        get() = _activeNotification.value != null
 
     val isMediaActive: Boolean
         get() {
@@ -90,30 +114,87 @@ object IslandStateManager {
         }
 
     val isProgressActive: Boolean
-        get() = _activeNotification.value?.hasProgress == true
+        get() = _activeProgress.value != null
 
     val isChargingActive: Boolean
         get() = _activeCharging.value != null
 
-    val isOccupied: Boolean
-        get() = isRecordingActive || isNotificationActive || isMediaActive || isProgressActive || isChargingActive
+    val isUnlockActive: Boolean
+        get() = _isUnlocked.value
 
-    // Live priority determination
+    val isBluetoothActive: Boolean
+        get() = _isBluetoothConnected.value
+
+    val isFlashlightActive: Boolean
+        get() = _isFlashlightOn.value
+
+    val isOccupied: Boolean
+        get() = isRecordingActive || isNotificationActive || isMediaActive || isProgressActive || isChargingActive || isUnlockActive || isBluetoothActive || isFlashlightActive
+
+    // Live priority determination: Media is always primary, then Flashlight right after media player, then Progress, Screen Recording, and Notification alerts last
     val currentPriority: IslandPriority
         get() {
             return when {
-                _screenRecordingState.value.isRecording -> IslandPriority.SCREEN_RECORDING
+                isMediaActive -> IslandPriority.MEDIA
+                isFlashlightActive -> IslandPriority.FLASHLIGHT
                 isProgressActive -> IslandPriority.PROGRESS
-                _isPopInActive.value && _activeNotification.value != null -> IslandPriority.POP_NOTIFICATION
-                _activeMedia.value?.isPlaying == true -> IslandPriority.MEDIA
+                _screenRecordingState.value.isRecording -> IslandPriority.SCREEN_RECORDING
                 _activeNotification.value != null -> IslandPriority.POP_NOTIFICATION
-                _activeMedia.value != null -> IslandPriority.MEDIA
                 else -> IslandPriority.IDLE
             }
         }
 
     val activeExpandedPriority: IslandPriority
         get() = _expandedPriority.value ?: currentPriority
+
+    fun updateFlashlightState(enabled: Boolean, level: Int = _flashlightLevel.value, maxLevel: Int = 4) {
+        _isFlashlightOn.value = enabled
+        _flashlightLevel.value = level.coerceIn(1, 4)
+        _maxFlashlightLevel.value = 4
+        if (!enabled && _isExpanded.value && (_expandedPriority.value == IslandPriority.FLASHLIGHT || !isOccupied)) {
+            collapse()
+        }
+    }
+
+    fun updateFlashlightLevel(level: Int) {
+        _flashlightLevel.value = level.coerceIn(1, 4)
+    }
+
+    fun setFlashlightBrightness(level: Int) {
+        val clamped = level.coerceIn(1, 4)
+        _flashlightLevel.value = clamped
+        onSetFlashlightLevel?.invoke(clamped)
+    }
+
+    fun turnOffFlashlight() {
+        _isFlashlightOn.value = false
+        onTurnOffFlashlight?.invoke()
+        if (_isExpanded.value && (_expandedPriority.value == IslandPriority.FLASHLIGHT || !isOccupied)) {
+            collapse()
+        }
+    }
+
+    fun triggerUnlockEvent() {
+        android.util.Log.d("IslandStateManager", "triggerUnlockEvent() invoked: setting isUnlocked = true for 1500ms")
+        unlockJob?.cancel()
+        _isUnlocked.value = true
+        unlockJob = scope.launch {
+            delay(1500) // 1.5 seconds as requested
+            _isUnlocked.value = false
+            android.util.Log.d("IslandStateManager", "triggerUnlockEvent() finished: isUnlocked reset to false")
+        }
+    }
+
+    fun triggerBluetoothEvent() {
+        android.util.Log.d("IslandStateManager", "triggerBluetoothEvent() invoked: setting isBluetoothConnected = true for 1500ms")
+        bluetoothJob?.cancel()
+        _isBluetoothConnected.value = true
+        bluetoothJob = scope.launch {
+            delay(1500) // 1.5 seconds exact same as unlock
+            _isBluetoothConnected.value = false
+            android.util.Log.d("IslandStateManager", "triggerBluetoothEvent() finished: isBluetoothConnected reset to false")
+        }
+    }
 
     fun triggerChargingEvent(percentage: Int, wattage: Double? = null) {
         chargingJob?.cancel()
@@ -169,20 +250,51 @@ object IslandStateManager {
     }
 
     fun updateNotification(notification: NotificationInfo?) {
+        if (notification != null && notification.hasProgress) {
+            updateProgress(notification)
+            return
+        }
         _activeNotification.value = notification
         if (notification == null) {
-            // Navigation, download or live progress notification ended
-            if (_isExpanded.value) {
-                collapse()
+            _isPopInActive.value = false
+            if (_isExpanded.value && (_expandedPriority.value == IslandPriority.POP_NOTIFICATION || !isOccupied)) {
+                if (!isOccupied) {
+                    collapse()
+                } else {
+                    _expandedPriority.value = null
+                }
             }
         } else {
-            if (notification.hasProgress) {
-                // Live progress task: keep active continuously while downloading
-                _isPopInActive.value = true
-                popInJob?.cancel()
-            } else {
-                triggerPopIn()
+            triggerPopIn()
+        }
+    }
+
+    fun updateProgress(progress: NotificationInfo?) {
+        _activeProgress.value = progress
+        if (progress == null) {
+            if (_isExpanded.value && (_expandedPriority.value == IslandPriority.PROGRESS || !isOccupied)) {
+                if (!isOccupied) {
+                    collapse()
+                } else {
+                    _expandedPriority.value = null
+                }
             }
+        }
+    }
+
+    fun removeNotification(key: String) {
+        var removed = false
+        if (_activeNotification.value?.key == key) {
+            _activeNotification.value = null
+            _isPopInActive.value = false
+            removed = true
+        }
+        if (_activeProgress.value?.key == key) {
+            _activeProgress.value = null
+            removed = true
+        }
+        if (removed && _isExpanded.value && !isOccupied) {
+            collapse()
         }
     }
 
@@ -197,13 +309,29 @@ object IslandStateManager {
 
     fun dismissCurrentNotification(): Boolean {
         val notif = _activeNotification.value ?: return false
-        // Live tasks with progress cannot be dismissed by swiping
-        if (notif.hasProgress) return false
         onDismissNotification?.invoke(notif.key)
         _activeNotification.value = null
         _isPopInActive.value = false
-        if (_isExpanded.value) {
-            collapse()
+        if (_isExpanded.value && (_expandedPriority.value == IslandPriority.POP_NOTIFICATION || !isOccupied)) {
+            if (!isOccupied) {
+                collapse()
+            } else {
+                _expandedPriority.value = null
+            }
+        }
+        return true
+    }
+
+    fun dismissProgress(): Boolean {
+        val prog = _activeProgress.value ?: return false
+        onDismissNotification?.invoke(prog.key)
+        _activeProgress.value = null
+        if (_isExpanded.value && (_expandedPriority.value == IslandPriority.PROGRESS || !isOccupied)) {
+            if (!isOccupied) {
+                collapse()
+            } else {
+                _expandedPriority.value = null
+            }
         }
         return true
     }
