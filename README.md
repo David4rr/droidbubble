@@ -16,7 +16,8 @@ Because Droidbubble is free and open source, there are no ads, no trackers, and 
 - **Customizable Dimensions**: Adjust width, height, corner radius, and screen alignment offsets to line up with any camera cutout or notch layout.
 - **Per-App Filter**: Choose which apps are allowed to appear on the island.
 
-## Requirements:
+Requirements:
+
 - Android 13+
 
 ## License
