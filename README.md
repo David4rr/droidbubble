@@ -16,21 +16,8 @@ Because Droidbubble is free and open source, there are no ads, no trackers, and 
 - **Customizable Dimensions**: Adjust width, height, corner radius, and screen alignment offsets to line up with any camera cutout or notch layout.
 - **Per-App Filter**: Choose which apps are allowed to appear on the island.
 
-## Building from Source
-
-Requirements:
-- Android SDK (API 29+)
-- Java 17 or higher
-
-To build the debug APK:
-```bash
-./gradlew assembleDebug
-```
-
-Install via ADB:
-```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
+## Requirements:
+- Android 13+
 
 ## License
 
