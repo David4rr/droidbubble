@@ -38,6 +38,9 @@ class SettingsRepository(private val context: Context) {
         val LEGACY_ANIMATION_SPEED = stringPreferencesKey("animation_speed")
         val BLOCKED_PACKAGES = stringSetPreferencesKey("blocked_packages")
         val RESTART_ON_BOOT = booleanPreferencesKey("restart_on_boot")
+        val BUBBLE_EFFECT_ENABLED = booleanPreferencesKey("bubble_effect_enabled")
+        val DISMISS_MEDIA_ON_PAUSE = booleanPreferencesKey("dismiss_media_on_pause")
+        val ALWAYS_SHOW_PILL = booleanPreferencesKey("always_show_pill")
     }
 
     val settingsFlow: Flow<IslandSettings> = context.dataStore.data.map { preferences ->
@@ -68,7 +71,10 @@ class SettingsRepository(private val context: Context) {
             showInLandscape = preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] ?: false,
             animationSpeed = resolvedSpeed,
             blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
-            restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true
+            restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true,
+            bubbleEffectEnabled = preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] ?: true,
+            dismissMediaOnPause = preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] ?: false,
+            alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false
         )
     }
 
@@ -101,7 +107,10 @@ class SettingsRepository(private val context: Context) {
                 showInLandscape = preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] ?: false,
                 animationSpeed = resolvedSpeed,
                 blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
-                restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true
+                restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true,
+                bubbleEffectEnabled = preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] ?: true,
+                dismissMediaOnPause = preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] ?: false,
+                alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false
             )
 
             val newSettings = update(current)
@@ -126,6 +135,9 @@ class SettingsRepository(private val context: Context) {
             preferences.remove(PreferencesKeys.LEGACY_ANIMATION_SPEED)
             preferences[PreferencesKeys.BLOCKED_PACKAGES] = newSettings.blockedPackages
             preferences[PreferencesKeys.RESTART_ON_BOOT] = newSettings.restartOnBoot
+            preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] = newSettings.bubbleEffectEnabled
+            preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] = newSettings.dismissMediaOnPause
+            preferences[PreferencesKeys.ALWAYS_SHOW_PILL] = newSettings.alwaysShowPill
         }
     }
 }

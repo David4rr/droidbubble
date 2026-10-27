@@ -11,8 +11,8 @@ android {
         applicationId = "com.droidbubble.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "1.1.5"
     }
 
     buildTypes {
@@ -38,6 +38,10 @@ android {
       aidl = false
       buildConfig = false
       shaders = false
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     packaging {

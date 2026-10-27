@@ -51,30 +51,10 @@ class NotificationReceiverService : NotificationListenerService() {
 
     private var mediaSessionManager: MediaSessionManager? = null
     private var activeMediaController: MediaController? = null
-
-    private val mediaCallback = object : MediaController.Callback() {
-        override fun onPlaybackStateChanged(state: PlaybackState?) {
-            updateMediaInfo()
-        }
-
-        override fun onMetadataChanged(metadata: MediaMetadata?) {
-            updateMediaInfo()
-        }
-
-        override fun onSessionDestroyed() {
-            try {
-                val componentName = ComponentName(this@NotificationReceiverService, NotificationReceiverService::class.java)
-                val remaining = mediaSessionManager?.getActiveSessions(componentName)
-                updateActiveMediaController(remaining)
-            } catch (e: Exception) {
-                activeMediaController = null
-                IslandStateManager.updateMedia(null)
-            }
-        }
-    }
+    private val controllerCallbacks = mutableMapOf<MediaController, MediaController.Callback>()
 
     private val sessionsChangedListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
-        updateActiveMediaController(controllers)
+        refreshMedia()
     }
 
     override fun onCreate() {
@@ -84,6 +64,8 @@ class NotificationReceiverService : NotificationListenerService() {
         serviceScope.launch {
             settingsRepository.settingsFlow.collectLatest {
                 currentSettings = it
+                IslandStateManager.dismissMediaOnPause = it.dismissMediaOnPause
+                refreshMedia()
             }
         }
 
@@ -111,7 +93,20 @@ class NotificationReceiverService : NotificationListenerService() {
         }
 
         IslandStateManager.onSeekTo = { pos ->
-            activeMediaController?.transportControls?.seekTo(pos)
+            try {
+                activeMediaController?.transportControls?.seekTo(pos)
+            } catch (e: Exception) {
+                Log.e("NotificationReceiver", "Error seeking", e)
+            }
+            val current = IslandStateManager.activeMedia.value
+            if (current != null) {
+                IslandStateManager.updateMedia(
+                    current.copy(
+                        positionMs = pos,
+                        lastPositionUpdateTimeMs = android.os.SystemClock.elapsedRealtime()
+                    )
+                )
+            }
         }
 
         IslandStateManager.onDismissNotification = { key ->
@@ -164,7 +159,10 @@ class NotificationReceiverService : NotificationListenerService() {
         super.onListenerDisconnected()
         try {
             mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionsChangedListener)
-            activeMediaController?.unregisterCallback(mediaCallback)
+            for ((ctrl, cb) in controllerCallbacks) {
+                runCatching { ctrl.unregisterCallback(cb) }
+            }
+            controllerCallbacks.clear()
             activeMediaController = null
         } catch (e: Exception) {
             Log.e("NotificationReceiver", "Error unregistering listener", e)
@@ -176,61 +174,132 @@ class NotificationReceiverService : NotificationListenerService() {
         if (instance === this) {
             instance = null
         }
+        for ((ctrl, cb) in controllerCallbacks) {
+            runCatching { ctrl.unregisterCallback(cb) }
+        }
+        controllerCallbacks.clear()
+        activeMediaController = null
         recordingTimerJob?.cancel()
         serviceScope.cancel()
     }
 
-    fun refreshMedia() {
+    fun refreshMedia(candidateController: MediaController? = null) {
         try {
             val componentName = ComponentName(this, NotificationReceiverService::class.java)
-            val controllers = mediaSessionManager?.getActiveSessions(componentName)
+            val controllers = mediaSessionManager?.getActiveSessions(componentName)?.toMutableList() ?: mutableListOf()
+            if (candidateController != null && controllers.none { it.packageName == candidateController.packageName }) {
+                controllers.add(candidateController)
+            }
+            syncControllers(controllers)
             updateActiveMediaController(controllers)
         } catch (_: Exception) {
             updateMediaInfo()
         }
     }
 
-    private fun findBestController(controllers: List<MediaController>?): MediaController? {
-        if (controllers.isNullOrEmpty()) return null
-
-        // 1. Prioritize any controller that is currently actively playing with valid metadata
-        val playingWithMeta = controllers.firstOrNull {
-            it.playbackState?.state == PlaybackState.STATE_PLAYING &&
-                    (!it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrBlank() ||
-                     !it.metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).isNullOrBlank())
+    private fun syncControllers(controllers: List<MediaController>) {
+        val toRemove = controllerCallbacks.keys.filter { existing ->
+            controllers.none { it.packageName == existing.packageName }
         }
-        if (playingWithMeta != null) return playingWithMeta
-
-        // 2. If current active controller is still in the list and has valid metadata, keep it!
-        // This ensures that when entering another app with audio that temporarily pauses our music player
-        // (or an app with no song metadata), the user's music player remains active and interactive on the island!
-        val current = activeMediaController
-        if (current != null) {
-            val stillPresent = controllers.firstOrNull { it.packageName == current.packageName }
-            if (stillPresent != null) {
-                val hasMeta = !stillPresent.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrBlank() ||
-                        !stillPresent.metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).isNullOrBlank()
-                if (hasMeta) {
-                    return stillPresent
-                }
+        for (old in toRemove) {
+            val cb = controllerCallbacks.remove(old)
+            if (cb != null) {
+                runCatching { old.unregisterCallback(cb) }
             }
         }
 
-        // 3. Otherwise find any controller with valid metadata (e.g. paused music player like Spotify)
+        for (controller in controllers) {
+            val already = controllerCallbacks.keys.any { it.packageName == controller.packageName }
+            if (!already) {
+                val cb = object : MediaController.Callback() {
+                    override fun onPlaybackStateChanged(state: PlaybackState?) {
+                        refreshMedia()
+                    }
+
+                    override fun onMetadataChanged(metadata: MediaMetadata?) {
+                        refreshMedia()
+                    }
+
+                    override fun onSessionDestroyed() {
+                        refreshMedia()
+                    }
+                }
+                runCatching { controller.registerCallback(cb) }
+                controllerCallbacks[controller] = cb
+            }
+        }
+    }
+
+    private fun isControllerPlayingOrBuffering(controller: MediaController): Boolean {
+        val state = controller.playbackState?.state ?: return false
+        return state == PlaybackState.STATE_PLAYING ||
+                state == PlaybackState.STATE_BUFFERING ||
+                state == PlaybackState.STATE_FAST_FORWARDING ||
+                state == PlaybackState.STATE_REWINDING
+    }
+
+    private fun getControllerTitle(controller: MediaController): String? {
+        val meta = controller.metadata
+        val rawTitle = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }
+            ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)?.takeIf { it.isNotBlank() }
+            ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION)?.takeIf { it.isNotBlank() }
+            ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)?.takeIf { it.isNotBlank() }
+            ?: meta?.getString(MediaMetadata.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }
+        if (!rawTitle.isNullOrBlank()) return rawTitle
+
+        val notif = activeNotifications?.firstOrNull { it.packageName == controller.packageName }
+        val notifTitle = notif?.notification?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.takeIf { it.isNotBlank() }
+            ?: notif?.notification?.extras?.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString()?.takeIf { it.isNotBlank() }
+        return notifTitle
+    }
+
+    private fun findBestController(controllers: List<MediaController>?): MediaController? {
+        if (controllers.isNullOrEmpty()) return null
+
+        if (currentSettings.dismissMediaOnPause) {
+            val playingWithMeta = controllers.firstOrNull {
+                isControllerPlayingOrBuffering(it) && !getControllerTitle(it).isNullOrBlank()
+            }
+            if (playingWithMeta != null) return playingWithMeta
+            return controllers.firstOrNull { isControllerPlayingOrBuffering(it) }
+        }
+
+        // 1. Prioritize any controller that is currently actively playing/buffering with valid title
+        val playingWithMeta = controllers.firstOrNull {
+            isControllerPlayingOrBuffering(it) && !getControllerTitle(it).isNullOrBlank()
+        }
+        if (playingWithMeta != null) return playingWithMeta
+
+        // 2. If current active controller is still in the list and playing/buffering, keep it!
+        val current = activeMediaController
+        if (current != null) {
+            val stillPresent = controllers.firstOrNull { it.packageName == current.packageName }
+            if (stillPresent != null && isControllerPlayingOrBuffering(stillPresent)) {
+                return stillPresent
+            }
+        }
+
+        // 3. Current active controller if still present and has a valid title (paused)
+        if (current != null) {
+            val stillPresent = controllers.firstOrNull { it.packageName == current.packageName }
+            if (stillPresent != null && !getControllerTitle(stillPresent).isNullOrBlank()) {
+                return stillPresent
+            }
+        }
+
+        // 4. Any controller with valid title (e.g. paused music player like Spotify, YouTube)
         val withMeta = controllers.firstOrNull {
-            val title = it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
-                ?: it.metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            !title.isNullOrBlank()
+            !getControllerTitle(it).isNullOrBlank()
         }
         if (withMeta != null) return withMeta
 
-        // 4. Any controller that is currently actively playing (even without metadata)
+        // 5. Any controller that is currently actively playing/buffering (even without title yet)
         val playing = controllers.firstOrNull {
-            it.playbackState?.state == PlaybackState.STATE_PLAYING
+            isControllerPlayingOrBuffering(it)
         }
         if (playing != null) return playing
 
-        // 5. Keep current controller if still in list
+        // 6. Keep current controller if still in list
         if (current != null) {
             val stillPresent = controllers.firstOrNull { it.packageName == current.packageName }
             if (stillPresent != null) {
@@ -244,17 +313,12 @@ class NotificationReceiverService : NotificationListenerService() {
     private fun updateActiveMediaController(controllers: List<MediaController>?) {
         val best = findBestController(controllers)
         if (best == null) {
-            activeMediaController?.unregisterCallback(mediaCallback)
             activeMediaController = null
             IslandStateManager.updateMedia(null)
             return
         }
 
-        if (best.packageName != activeMediaController?.packageName) {
-            activeMediaController?.unregisterCallback(mediaCallback)
-            activeMediaController = best
-            activeMediaController?.registerCallback(mediaCallback)
-        }
+        activeMediaController = best
         updateMediaInfo()
     }
 
@@ -278,20 +342,36 @@ class NotificationReceiverService : NotificationListenerService() {
             return
         }
 
-        val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
-        val rawTitle = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)?.takeIf { it.isNotBlank() }
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }
-
-        val title = rawTitle ?: if (isPlaying) "Playing Audio" else null
+        val isPlaying = isControllerPlayingOrBuffering(controller)
+        if (currentSettings.dismissMediaOnPause && !isPlaying) {
+            IslandStateManager.updateMedia(null)
+            return
+        }
+        val title = getControllerTitle(controller) ?: if (isPlaying) "Playing Audio" else null
         if (title == null) {
             IslandStateManager.updateMedia(null)
             return
         }
-        val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }
+
+        val rawArtist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }
             ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)?.takeIf { it.isNotBlank() }
             ?: metadata?.getString(MediaMetadata.METADATA_KEY_AUTHOR)?.takeIf { it.isNotBlank() }
-            ?: controller.packageName
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_WRITER)?.takeIf { it.isNotBlank() }
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_COMPOSER)?.takeIf { it.isNotBlank() }
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)?.takeIf { it.isNotBlank() }
+
+        val notif = activeNotifications?.firstOrNull { it.packageName == controller.packageName }
+        val notifArtist = notif?.notification?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.takeIf { it.isNotBlank() }
+            ?: notif?.notification?.extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.takeIf { it.isNotBlank() }
+            ?: notif?.notification?.extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.takeIf { it.isNotBlank() }
+
+        val artist = rawArtist ?: notifArtist ?: try {
+            val pm = packageManager
+            val appInfo = pm.getApplicationInfo(controller.packageName, 0)
+            pm.getApplicationLabel(appInfo).toString()
+        } catch (_: Exception) {
+            controller.packageName
+        }
 
         var artBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
@@ -315,15 +395,36 @@ class NotificationReceiverService : NotificationListenerService() {
         // Also check if an active notification from this app provides large icon art
         if (artBitmap == null) {
             artBitmap = runCatching {
-                activeNotifications?.firstOrNull { it.packageName == controller.packageName }
-                    ?.notification?.getLargeIcon()?.loadDrawable(this)?.let { drawableToBitmap(it) }
+                val notifObj = notif?.notification
+                notifObj?.getLargeIcon()?.loadDrawable(this)?.let { drawableToBitmap(it) }
+                    ?: (notifObj?.extras?.getParcelable(Notification.EXTRA_LARGE_ICON) as? Bitmap)
             }.getOrNull()
         }
 
         val appIconBitmap = getAppIconBitmap(controller.packageName)
 
-        val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+        var duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+        if (duration <= 0L) {
+            val durationStr = metadata?.getString(MediaMetadata.METADATA_KEY_DURATION)
+            if (!durationStr.isNullOrBlank()) {
+                duration = durationStr.toLongOrNull() ?: 0L
+            }
+        }
+        if (duration <= 0L && notif != null) {
+            val maxProgress = notif.notification.extras?.getInt(Notification.EXTRA_PROGRESS_MAX) ?: 0
+            val isIndeterminate = notif.notification.extras?.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false) ?: false
+            if (!isIndeterminate && maxProgress > 0) {
+                duration = if (maxProgress > 1000) maxProgress.toLong() else maxProgress * 1000L
+            }
+        }
+
         val position = playbackState?.position ?: 0L
+        val speed = playbackState?.playbackSpeed?.takeIf { it > 0f } ?: 1f
+        val lastUpdate = if (playbackState != null && playbackState.lastPositionUpdateTime > 0L) {
+            playbackState.lastPositionUpdateTime
+        } else {
+            android.os.SystemClock.elapsedRealtime()
+        }
 
         IslandStateManager.updateMedia(
             MediaInfo(
@@ -335,7 +436,9 @@ class NotificationReceiverService : NotificationListenerService() {
                 sessionActivity = controller.sessionActivity,
                 isPlaying = isPlaying,
                 durationMs = duration,
-                positionMs = position
+                positionMs = position,
+                playbackSpeed = speed,
+                lastPositionUpdateTimeMs = lastUpdate
             )
         )
     }
@@ -538,6 +641,20 @@ class NotificationReceiverService : NotificationListenerService() {
 
         // 2. Skip media notifications (Media controls are handled exclusively via MediaSessionManager with slider & controls)
         if (isMediaNotification(sbn, notification)) {
+            val token: android.media.session.MediaSession.Token? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, android.media.session.MediaSession.Token::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) as? android.media.session.MediaSession.Token
+            } ?: run {
+                @Suppress("DEPRECATION")
+                extras.getParcelable("android.mediaSession") as? android.media.session.MediaSession.Token
+            }
+
+            val directController = token?.let {
+                runCatching { MediaController(this, it) }.getOrNull()
+            }
+            refreshMedia(directController)
             return
         }
 
@@ -630,6 +747,10 @@ class NotificationReceiverService : NotificationListenerService() {
             activePauseAction = null
             activeResumeAction = null
             IslandStateManager.updateRecordingState(ScreenRecordingState(isRecording = false))
+        }
+        val notifObj = sbn.notification
+        if (notifObj != null && (isMediaNotification(sbn, notifObj) || sbn.packageName == activeMediaController?.packageName)) {
+            refreshMedia()
         }
         IslandStateManager.removeNotification(sbn.key)
     }

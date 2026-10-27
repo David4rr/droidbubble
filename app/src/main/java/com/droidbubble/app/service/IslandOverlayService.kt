@@ -508,6 +508,7 @@ class IslandOverlayService : Service() {
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val allowedInOrientation = currentSettings.isEnabled && (currentSettings.showInLandscape || !isLandscape)
         val isOccupied = IslandStateManager.isOccupied && allowedInOrientation
+        val shouldShowCompact = (isOccupied || currentSettings.alwaysShowPill) && allowedInOrientation
         val isCharging = IslandStateManager.isChargingActive
         val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
                 (if (IslandStateManager.isNotificationActive) 1 else 0) +
@@ -518,19 +519,19 @@ class IslandOverlayService : Service() {
 
         val totalWidthDp = if (isCharging) {
             val chargingPillWidth = (currentSettings.widthDp + 20f).coerceAtLeast(140f)
-            chargingPillWidth + 44f
+            chargingPillWidth + 24f
         } else if (isDual) {
             val mainHalf = (currentSettings.widthDp * 0.74f) / 2f
-            val rightEdge = mainHalf + 8f + currentSettings.heightDp + 22f
-            (rightEdge * 2f).coerceAtLeast(currentSettings.widthDp + 44f)
+            val rightEdge = mainHalf + 8f + currentSettings.heightDp + 12f
+            (rightEdge * 2f).coerceAtLeast(currentSettings.widthDp + 24f)
         } else {
-            currentSettings.widthDp + 44f
+            currentSettings.widthDp + 24f
         }
 
-        val initialWidth = if (isOccupied) {
+        val initialWidth = if (shouldShowCompact) {
             ((totalWidthDp + 2f * kotlin.math.abs(currentSettings.horizontalOffsetDp)) * density).toInt()
         } else 1
-        val initialHeight = if (isOccupied) ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt() else 1
+        val initialHeight = if (shouldShowCompact) ((currentSettings.topOffsetDp + currentSettings.heightDp + 4) * density).toInt() else 1
         val initialFlags = if (isOccupied) flags else (flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
 
         val windowType = if (aService != null) {
@@ -684,6 +685,7 @@ class IslandOverlayService : Service() {
             val isUnlock = IslandStateManager.isUnlockActive
             val isBluetooth = IslandStateManager.isBluetoothActive
             val isOccupied = IslandStateManager.isOccupied
+            val shouldShowCompact = isOccupied || currentSettings.alwaysShowPill
             val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
                     (if (IslandStateManager.isNotificationActive) 1 else 0) +
                     (if (IslandStateManager.isMediaActive) 1 else 0) +
@@ -693,27 +695,31 @@ class IslandOverlayService : Service() {
 
             val totalWidthDp = if (isCharging) {
                 val chargingPillWidth = (currentSettings.widthDp + 20f).coerceAtLeast(140f)
-                chargingPillWidth + 44f
+                chargingPillWidth + 24f
             } else if (isUnlock || isBluetooth) {
                 val pillWidth = (currentSettings.widthDp * 0.82f).coerceAtLeast(108f)
-                pillWidth + 44f
+                pillWidth + 24f
             } else if (isDual) {
                 val mainHalf = (currentSettings.widthDp * 0.74f) / 2f
-                val rightEdge = mainHalf + 8f + currentSettings.heightDp + 22f
-                (rightEdge * 2f).coerceAtLeast(currentSettings.widthDp + 44f)
+                val rightEdge = mainHalf + 8f + currentSettings.heightDp + 12f
+                (rightEdge * 2f).coerceAtLeast(currentSettings.widthDp + 24f)
             } else {
-                currentSettings.widthDp + 44f
+                currentSettings.widthDp + 24f
             }
 
             fun applyCompactBounds() {
                 collapseJob?.cancel()
-                if (isOccupied) {
+                if (shouldShowCompact) {
                     params.width = ((totalWidthDp + 2f * kotlin.math.abs(currentSettings.horizontalOffsetDp)) * density).toInt()
                     params.x = 0
-                    params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 36) * density).toInt()
+                    params.height = ((currentSettings.topOffsetDp + currentSettings.heightDp + 4) * density).toInt()
                     params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                     params.y = 0
-                    params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                    if (isOccupied) {
+                        params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                    } else {
+                        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    }
                     disableMoveAnimation(params)
                     runCatching { windowManager?.updateViewLayout(view, params) }
                 } else {
@@ -745,12 +751,12 @@ class IslandOverlayService : Service() {
                         applyCompactBounds()
                     }
                 }
-            } else if (!isOccupied) {
-                // When unoccupied, keep bounds briefly for the smooth shrink-to-middle animation, then collapse
+            } else if (!isOccupied && !currentSettings.alwaysShowPill) {
+                // When unoccupied and not always showing pill, keep bounds briefly for the smooth shrink-to-middle animation, then collapse
                 collapseJob?.cancel()
                 collapseJob = serviceScope.launch {
                     kotlinx.coroutines.delay(360)
-                    if (!IslandStateManager.isOccupied && !IslandStateManager.isExpanded.value) {
+                    if (!IslandStateManager.isOccupied && !IslandStateManager.isExpanded.value && !currentSettings.alwaysShowPill) {
                         params.width = 1
                         params.height = 1
                         params.x = 0

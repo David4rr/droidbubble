@@ -104,10 +104,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -218,7 +223,7 @@ fun IslandOverlayRoot(
     val isRecording = allowInOrientation && recording.isRecording && settings.showScreenRecording
     val isProgress = allowInOrientation && currentProgress != null && settings.showLiveProgress
     val isNotification = allowInOrientation && currentNotif != null && settings.showNotifications
-    val isMedia = allowInOrientation && currentMedia != null && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
+    val isMedia = allowInOrientation && currentMedia != null && (!settings.dismissMediaOnPause || currentMedia.isPlaying) && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
     val isFlashlight = allowInOrientation && isFlashlightOn
     val isCharging = allowInOrientation && charging != null
     val isUnlock = allowInOrientation && isUnlocked && !isCharging
@@ -495,7 +500,7 @@ fun IslandOverlayRoot(
     // When expanding, it animates from its compact width down to 0.dp.
     // When minimising, it animates from 0.dp back to its compact width.
     val targetCompactWidth = when {
-        !isOccupied -> 0.dp
+        !isOccupied && !settings.alwaysShowPill -> 0.dp
         isExpanded -> 0.dp // Shrinks horizontally into 0 width while card expands!
         isCharging -> chargingIslandWidth
         isUnlock || isBluetooth -> unlockIslandWidth
@@ -649,13 +654,13 @@ fun IslandOverlayRoot(
     var wasExpanded by remember { mutableStateOf(isExpanded) }
     var wasOccupied by remember { mutableStateOf(isOccupied) }
 
-    LaunchedEffect(isExpanded, isOccupied) {
+    LaunchedEffect(isExpanded, isOccupied, settings.bubbleEffectEnabled) {
         val justMinimised = wasExpanded && !isExpanded
         val justAppeared = !wasOccupied && isOccupied && !isExpanded
         wasExpanded = isExpanded
         wasOccupied = isOccupied
 
-        if (justMinimised || justAppeared) {
+        if (settings.bubbleEffectEnabled && (justMinimised || justAppeared)) {
             parenthesisExtraShoot.snapTo(0f)
             // Wait for minimised island pill to expand close to punch hole exit (~70ms at 1x speed)
             kotlinx.coroutines.delay((70L / speed).toLong().coerceAtLeast(10L))
@@ -668,7 +673,7 @@ fun IslandOverlayRoot(
                     stiffness = 260f * speedSq
                 )
             )
-        } else if (isExpanded || !isOccupied) {
+        } else {
             parenthesisExtraShoot.snapTo(0f)
         }
     }
@@ -1067,7 +1072,7 @@ fun IslandOverlayRoot(
             // Smoothly fade in over the first frames where it is barely a circle emerging from the punch hole,
             // and smoothly fade out when shrinking back into the punch hole.
             // Applies to both single and dual activities!
-            val circleThreshold = (settings.heightDp.dp * 0.95f).coerceAtLeast(30.dp)
+            val circleThreshold = (settings.heightDp.dp * 0.95f).coerceAtLeast(10.dp)
             val emergenceProgress = (animatedCompactWidth / circleThreshold).coerceIn(0f, 1f)
             val compactPillAlpha = emergenceProgress * emergenceProgress * (3f - 2f * emergenceProgress)
 
@@ -1380,7 +1385,7 @@ fun IslandOverlayRoot(
             val parenthesisEmergenceAlpha = (animatedCompactWidth / 14.dp).coerceIn(0f, 1f)
             val effectiveParenthesisAlpha = parenthesisAlphaAnim * parenthesisEmergenceAlpha
 
-            if (effectiveParenthesisAlpha > 0.01f && animatedCompactWidth > 3.dp) {
+            if (settings.bubbleEffectEnabled && effectiveParenthesisAlpha > 0.01f && animatedCompactWidth > 3.dp) {
                 val parenthesisHeight = (settings.heightDp.dp * 0.52f).coerceIn(16.dp, 21.dp)
                 val extraShootDp = parenthesisExtraShoot.value.dp
                 val parenthesisWidth = 5.0.dp + (extraShootDp * 0.20f)
@@ -1435,29 +1440,6 @@ fun IslandOverlayRoot(
                     modifier = Modifier
                         .offset { IntOffset(x = rightCenterXPx, y = pYPx) }
                         .graphicsLayer { alpha = effectiveParenthesisAlpha }
-                )
-            }
-
-            // 4. Extended hit-box for compact mode: covers the pill + bubble + extends 36dp downwards into the safe zone
-            if (!isExpanded && isOccupied) {
-                val bubbleRightEdge = animatedBubbleOffsetX + (bubbleSize / 2f)
-                val rightContentEdge = if (!isCharging && animatedBubbleOffsetX > 1.dp) {
-                    maxOf(animatedCompactWidth / 2f, bubbleRightEdge)
-                } else {
-                    animatedCompactWidth / 2f
-                }
-                val compactHitWidth = (rightContentEdge + 20.dp) * 2f
-                Box(
-                    modifier = Modifier
-                        .width(compactHitWidth)
-                        .height(settings.heightDp.dp + 36.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            triggerHaptic()
-                            IslandStateManager.expand()
-                        }
                 )
             }
         }
@@ -2112,11 +2094,43 @@ fun ExpandedFlashlightView(
 @Composable
 fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var isSeeking by remember { mutableStateOf(false) }
-    var scrubPosition by remember { mutableFloatStateOf(0f) }
+    var scrubFraction by remember { mutableFloatStateOf(0f) }
+    var isSeekPending by remember { mutableStateOf(false) }
 
-    val currentPosition = if (isSeeking) scrubPosition.toLong() else (media?.positionMs ?: 0L)
-    val duration = (media?.durationMs ?: 0L).coerceAtLeast(1L)
+    val rawDuration = media?.durationMs ?: 0L
+    val hasValidDuration = rawDuration > 0L
+    val duration = if (hasValidDuration) rawDuration else 0L
+
+    var livePosition by remember(media?.packageName, media?.title) {
+        mutableLongStateOf(media?.computeCurrentPosition() ?: 0L)
+    }
+
+    LaunchedEffect(media?.isPlaying, media?.positionMs, media?.lastPositionUpdateTimeMs, isSeeking, isSeekPending) {
+        if (!isSeeking && !isSeekPending) {
+            livePosition = media?.computeCurrentPosition() ?: 0L
+            if (media?.isPlaying == true) {
+                while (isActive) {
+                    kotlinx.coroutines.delay(250)
+                    if (!isSeeking && !isSeekPending) {
+                        livePosition = media?.computeCurrentPosition() ?: 0L
+                    }
+                }
+            }
+        }
+    }
+
+    val currentPosition = when {
+        isSeeking -> if (hasValidDuration) (scrubFraction * duration).toLong().coerceIn(0L, duration) else livePosition
+        else -> livePosition
+    }
+
+    val sliderProgress = when {
+        isSeeking -> scrubFraction
+        hasValidDuration -> (livePosition.toFloat() / duration).coerceIn(0f, 1f)
+        else -> 0f
+    }
 
     val displayArt = media?.albumArt ?: media?.appIcon
     val mediaAccentColor = remember(displayArt) { extractMediaAccentColor(displayArt) }
@@ -2265,23 +2279,37 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
             Spacer(modifier = Modifier.width(10.dp))
 
             Slider(
-                value = (currentPosition.toFloat() / duration).coerceIn(0f, 1f),
+                value = sliderProgress,
+                enabled = hasValidDuration,
                 onValueChange = { frac ->
                     isSeeking = true
-                    scrubPosition = frac * duration
+                    scrubFraction = frac
                 },
                 onValueChangeFinished = {
-                    isSeeking = false
-                    IslandStateManager.onSeekTo?.invoke(scrubPosition.toLong())
+                    if (hasValidDuration) {
+                        val seekTargetMs = (scrubFraction * duration).toLong().coerceIn(0L, duration)
+                        livePosition = seekTargetMs
+                        isSeekPending = true
+                        isSeeking = false
+                        IslandStateManager.onSeekTo?.invoke(seekTargetMs)
+                        coroutineScope.launch {
+                            kotlinx.coroutines.delay(650)
+                            isSeekPending = false
+                        }
+                    } else {
+                        isSeeking = false
+                    }
                 },
                 thumb = {
-                    Box(
-                        modifier = Modifier
-                            .width(3.dp)
-                            .height(14.dp)
-                            .clip(RoundedCornerShape(1.5.dp))
-                            .background(sliderActiveTint)
-                    )
+                    if (hasValidDuration) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(14.dp)
+                                .clip(RoundedCornerShape(1.5.dp))
+                                .background(sliderActiveTint)
+                        )
+                    }
                 },
                 track = { sliderState ->
                     SliderDefaults.Track(
@@ -2290,7 +2318,9 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
                         drawTick = { _, _ -> },
                         colors = SliderDefaults.colors(
                             activeTrackColor = sliderActiveTint,
-                            inactiveTrackColor = sliderInactiveTint
+                            inactiveTrackColor = sliderInactiveTint,
+                            disabledActiveTrackColor = sliderInactiveTint.copy(alpha = 0.5f),
+                            disabledInactiveTrackColor = sliderInactiveTint.copy(alpha = 0.3f)
                         )
                     )
                 },
@@ -2302,7 +2332,7 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit) {
             Spacer(modifier = Modifier.width(10.dp))
 
             Text(
-                text = formatDuration(duration),
+                text = if (hasValidDuration) formatDuration(duration) else "--:--",
                 color = durationTextTint,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
@@ -3164,8 +3194,14 @@ fun EqualizerVisualizer(isPlaying: Boolean, barColor: Color = Color(0xFFE5E5EA))
 }
 
 private fun formatDuration(millis: Long): String {
+    if (millis <= 0L) return "0:00"
     val totalSeconds = (millis / 1000).coerceAtLeast(0)
-    val minutes = totalSeconds / 60
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+    return if (hours > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.US, "%02d:%02d", minutes, seconds)
+    }
 }

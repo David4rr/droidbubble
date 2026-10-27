@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Emergency
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Info
@@ -46,12 +47,15 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RoundedCorner
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.ScreenSearchDesktop
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Videocam
@@ -61,6 +65,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -68,6 +73,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -130,6 +136,8 @@ fun MainScreen(
     val pendingPermissions by viewModel.pendingPermissions.collectAsState()
     val installedApps by viewModel.installedApps.collectAsState()
     val isLoadingApps by viewModel.isLoadingApps.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
+    val showUpdateSheet by viewModel.showUpdateSheet.collectAsState()
 
     var showAppFilterSheet by remember { mutableStateOf(false) }
     var appFilterQuery by remember { mutableStateOf("") }
@@ -248,6 +256,124 @@ fun MainScreen(
                 }
             }
 
+            // UPDATE BUTTON: Shaped like a list component in bright accent color
+            item {
+                val isDownloading = updateState is MainScreenViewModel.UpdateState.Downloading
+                val isChecking = updateState is MainScreenViewModel.UpdateState.Checking
+                val isAvailable = updateState is MainScreenViewModel.UpdateState.Available
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable(enabled = !isDownloading && !isChecking) {
+                            if (isAvailable) {
+                                viewModel.openUpdateSheet()
+                            } else {
+                                viewModel.checkForUpdates(context)
+                            }
+                        },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shadowElevation = 2.dp
+                ) {
+                    ListItem(
+                        colors = ListItemDefaults.colors(
+                            containerColor = Color.Transparent,
+                            headlineColor = MaterialTheme.colorScheme.onPrimary,
+                            supportingColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                            leadingIconColor = MaterialTheme.colorScheme.onPrimary,
+                            trailingIconColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        headlineContent = {
+                            Text(
+                                text = when (updateState) {
+                                    is MainScreenViewModel.UpdateState.Checking -> "Checking for updates..."
+                                    is MainScreenViewModel.UpdateState.UpToDate -> "Up to date"
+                                    is MainScreenViewModel.UpdateState.Available -> {
+                                        val rel = (updateState as MainScreenViewModel.UpdateState.Available).release
+                                        "Update available (${rel.version})"
+                                    }
+                                    is MainScreenViewModel.UpdateState.Downloading -> {
+                                        val p = ((updateState as MainScreenViewModel.UpdateState.Downloading).progress * 100).roundToInt()
+                                        "Downloading update ($p%)..."
+                                    }
+                                    is MainScreenViewModel.UpdateState.Error -> "Check for Updates"
+                                    else -> "Check for Updates"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                        },
+                        supportingContent = {
+                            Text(
+                                text = when (updateState) {
+                                    is MainScreenViewModel.UpdateState.UpToDate -> "You're running the latest release (v1.1.5)"
+                                    is MainScreenViewModel.UpdateState.Available -> "Tap to review & install update"
+                                    is MainScreenViewModel.UpdateState.Downloading -> "Installing will start automatically"
+                                    is MainScreenViewModel.UpdateState.Checking -> "Connecting to GitHub releases..."
+                                    is MainScreenViewModel.UpdateState.Error -> (updateState as MainScreenViewModel.UpdateState.Error).message
+                                    else -> "Tap to check for new releases on GitHub"
+                                },
+                                fontSize = 12.sp
+                            )
+                        },
+                        leadingContent = {
+                            when (updateState) {
+                                is MainScreenViewModel.UpdateState.Checking -> {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        strokeWidth = 2.5.dp
+                                    )
+                                }
+                                is MainScreenViewModel.UpdateState.UpToDate -> {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Up to date",
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                is MainScreenViewModel.UpdateState.Available -> {
+                                    Icon(
+                                        imageVector = Icons.Default.SystemUpdate,
+                                        contentDescription = "Update Available",
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                else -> {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Check for Updates",
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                        },
+                        trailingContent = {
+                            if (updateState is MainScreenViewModel.UpdateState.Available) {
+                                val rel = (updateState as MainScreenViewModel.UpdateState.Available).release
+                                if (rel.isBeta) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.22f)
+                                    ) {
+                                        Text(
+                                            text = "BETA",
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+
             // SECTION 3: GEOMETRY SLIDERS (Separated items, 4.dp gap, inner square-ish outer rounded)
             item {
                 SectionHeader(
@@ -276,7 +402,7 @@ fun MainScreen(
                             label = "Height",
                             value = settings.heightDp.toFloat(),
                             unit = "dp",
-                            valueRange = 26f..56f,
+                            valueRange = 12f..56f,
                             onValueChange = { viewModel.updateSettings { s -> s.copy(heightDp = it.roundToInt()) } }
                         )
                     }
@@ -389,6 +515,42 @@ fun MainScreen(
                     SettingsCardItem(position = GroupPosition.TOP) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Bubble Effect", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.RoundedCorner, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.bubbleEffectEnabled,
+                                    onCheckedChange = { enabled ->
+                                        viewModel.updateSettings { it.copy(bubbleEffectEnabled = enabled) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Always Show Pill", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.FitScreen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.alwaysShowPill,
+                                    onCheckedChange = { alwaysShow ->
+                                        viewModel.updateSettings { it.copy(alwaysShowPill = alwaysShow) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
                                 Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -453,6 +615,26 @@ fun MainScreen(
                                 )
                             }
                         )
+                    }
+
+                    if (settings.showMedia) {
+                        SettingsCardItem(position = GroupPosition.MIDDLE) {
+                            ListItem(
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                headlineContent = { Text("Dismiss on Pause", fontWeight = FontWeight.SemiBold) },
+                                leadingContent = {
+                                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                },
+                                trailingContent = {
+                                    Switch(
+                                        checked = settings.dismissMediaOnPause,
+                                        onCheckedChange = { dismiss ->
+                                            viewModel.updateSettings { it.copy(dismissMediaOnPause = dismiss) }
+                                        }
+                                    )
+                                }
+                            )
+                        }
                     }
 
                     SettingsCardItem(position = GroupPosition.MIDDLE) {
@@ -617,6 +799,151 @@ fun MainScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // Update Available Pop-up Shelf / Dialog
+    if (showUpdateSheet) {
+        val currentUpdate = (updateState as? MainScreenViewModel.UpdateState.Available)?.release
+            ?: (updateState as? MainScreenViewModel.UpdateState.Downloading)?.release
+        val downloadingProgress = (updateState as? MainScreenViewModel.UpdateState.Downloading)?.progress
+
+        if (currentUpdate != null) {
+            ModalBottomSheet(
+                onDismissRequest = { viewModel.dismissUpdateSheet() },
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Version ${currentUpdate.version}",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (currentUpdate.isBeta) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.tertiaryContainer
+                                    ) {
+                                        Text(
+                                            text = "BETA",
+                                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = currentUpdate.name.takeIf { it != currentUpdate.version && it != currentUpdate.tagName } ?: "New GitHub Release",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (currentUpdate.changelog.isNotBlank()) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "What's New",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = currentUpdate.changelog,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    if (downloadingProgress != null) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Downloading APK...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${(downloadingProgress * 100).roundToInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            LinearProgressIndicator(
+                                progress = { downloadingProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { viewModel.dismissUpdateSheet() },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("Later")
+                        }
+
+                        Button(
+                            onClick = {
+                                viewModel.downloadAndInstallUpdate(context, currentUpdate)
+                            },
+                            enabled = downloadingProgress == null,
+                            modifier = Modifier.weight(1.5f),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            if (downloadingProgress != null) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Downloading...")
+                            } else {
+                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Install Update")
+                            }
+                        }
+                    }
+                }
             }
         }
     }

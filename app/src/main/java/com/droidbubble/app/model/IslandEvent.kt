@@ -12,8 +12,19 @@ data class MediaInfo(
     val sessionActivity: PendingIntent? = null,
     val isPlaying: Boolean = false,
     val durationMs: Long = 0L,
-    val positionMs: Long = 0L
-)
+    val positionMs: Long = 0L,
+    val playbackSpeed: Float = 1f,
+    val lastPositionUpdateTimeMs: Long = 0L
+) {
+    fun computeCurrentPosition(nowMs: Long = runCatching { android.os.SystemClock.elapsedRealtime() }.getOrDefault(0L)): Long {
+        var pos = positionMs
+        if (isPlaying && lastPositionUpdateTimeMs > 0L && nowMs > 0L) {
+            val delta = (nowMs - lastPositionUpdateTimeMs).coerceAtLeast(0L)
+            pos += (delta * playbackSpeed).toLong()
+        }
+        return if (durationMs > 0L) pos.coerceIn(0L, durationMs) else pos.coerceAtLeast(0L)
+    }
+}
 
 data class NotificationAction(
     val title: String,

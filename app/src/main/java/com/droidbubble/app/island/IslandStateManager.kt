@@ -106,9 +106,12 @@ object IslandStateManager {
     val isNotificationActive: Boolean
         get() = _activeNotification.value != null
 
+    var dismissMediaOnPause: Boolean = false
+
     val isMediaActive: Boolean
         get() {
             val media = _activeMedia.value ?: return false
+            if (dismissMediaOnPause && !media.isPlaying) return false
             // Keep active whenever a media session exists with a title so the island remains visible & expandable when paused!
             return media.title.isNotBlank()
         }
@@ -211,6 +214,13 @@ object IslandStateManager {
     }
 
     fun updateMedia(media: MediaInfo?) {
+        if (dismissMediaOnPause && media != null && !media.isPlaying) {
+            _activeMedia.value = null
+            if (_isExpanded.value && (_expandedPriority.value == IslandPriority.MEDIA || !isOccupied)) {
+                collapse()
+            }
+            return
+        }
         if (media != null && media.packageName == dismissedMediaPackage) {
             if (media.isPlaying) {
                 // Playback resumed, un-dismiss!

@@ -28,8 +28,8 @@ class IslandAccessibilityService : AccessibilityService() {
             val pkg = event.packageName?.toString() ?: return
             if (pkg == IslandStateManager.dismissedMediaPackage) {
                 IslandStateManager.unDismissMedia(pkg)
-                NotificationReceiverService.instance?.refreshMedia()
             }
+            NotificationReceiverService.instance?.refreshMedia()
         }
     }
 
