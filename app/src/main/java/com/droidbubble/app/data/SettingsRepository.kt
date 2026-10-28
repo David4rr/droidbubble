@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.droidbubble.app.model.IslandSettings
+import com.droidbubble.app.model.DEFAULT_FEATURE_PRIORITIES
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -33,6 +34,9 @@ class SettingsRepository(private val context: Context) {
         val SHOW_NOTIFICATIONS = booleanPreferencesKey("show_notifications")
         val SHOW_LIVE_PROGRESS = booleanPreferencesKey("show_live_progress")
         val SHOW_SCREEN_RECORDING = booleanPreferencesKey("show_screen_recording")
+        val SHOW_BLUETOOTH = booleanPreferencesKey("show_bluetooth")
+        val SHOW_CHARGING = booleanPreferencesKey("show_charging")
+        val SHOW_RINGER_MODE = booleanPreferencesKey("show_ringer_mode")
         val SHOW_IN_LANDSCAPE = booleanPreferencesKey("show_in_landscape")
         val ANIMATION_SPEED_MULTIPLIER = floatPreferencesKey("anim_speed_multiplier")
         val LEGACY_ANIMATION_SPEED = stringPreferencesKey("animation_speed")
@@ -41,6 +45,12 @@ class SettingsRepository(private val context: Context) {
         val BUBBLE_EFFECT_ENABLED = booleanPreferencesKey("bubble_effect_enabled")
         val DISMISS_MEDIA_ON_PAUSE = booleanPreferencesKey("dismiss_media_on_pause")
         val ALWAYS_SHOW_PILL = booleanPreferencesKey("always_show_pill")
+        val SHOW_FPS = booleanPreferencesKey("show_fps")
+        val SHOW_WEATHER = booleanPreferencesKey("show_weather")
+        val SHOW_NETWORK_SPEED = booleanPreferencesKey("show_network_speed")
+        val AUTO_DISMISS_NOTIFICATIONS = booleanPreferencesKey("auto_dismiss_notifications")
+        val BLURRED_ALBUM_ART_BACKGROUND = booleanPreferencesKey("blurred_album_art_background")
+        val FEATURE_PRIORITIES = stringPreferencesKey("feature_priorities")
     }
 
     val settingsFlow: Flow<IslandSettings> = context.dataStore.data.map { preferences ->
@@ -48,7 +58,7 @@ class SettingsRepository(private val context: Context) {
             when (preferences[PreferencesKeys.LEGACY_ANIMATION_SPEED]) {
                 "FAST" -> 1.5f
                 "SLOW" -> 0.7f
-                else -> 1.0f
+                else -> 0.7f
             }
         }
 
@@ -62,19 +72,35 @@ class SettingsRepository(private val context: Context) {
             showOutline = preferences[PreferencesKeys.SHOW_OUTLINE] ?: true,
             outlineColorArgb = preferences[PreferencesKeys.OUTLINE_COLOR_ARGB] ?: 0x33FFFFFF,
             outlineThicknessDp = preferences[PreferencesKeys.OUTLINE_THICKNESS_DP] ?: 1.5f,
-            expandedScale = preferences[PreferencesKeys.EXPANDED_SCALE] ?: 1.0f,
+            expandedScale = preferences[PreferencesKeys.EXPANDED_SCALE] ?: 1.1f,
             hapticsEnabled = preferences[PreferencesKeys.HAPTICS_ENABLED] ?: true,
             showMedia = preferences[PreferencesKeys.SHOW_MEDIA] ?: true,
             showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
             showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
             showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+            showBluetooth = preferences[PreferencesKeys.SHOW_BLUETOOTH] ?: true,
+            showCharging = preferences[PreferencesKeys.SHOW_CHARGING] ?: true,
+            showRingerMode = preferences[PreferencesKeys.SHOW_RINGER_MODE] ?: true,
             showInLandscape = preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] ?: false,
             animationSpeed = resolvedSpeed,
             blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
             restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true,
             bubbleEffectEnabled = preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] ?: true,
             dismissMediaOnPause = preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] ?: false,
-            alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false
+            alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false,
+            showFps = preferences[PreferencesKeys.SHOW_FPS] ?: false,
+            showWeather = preferences[PreferencesKeys.SHOW_WEATHER] ?: false,
+            showNetworkSpeed = preferences[PreferencesKeys.SHOW_NETWORK_SPEED] ?: false,
+            autoDismissNotifications = preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] ?: false,
+            blurredAlbumArtBackground = preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] ?: false,
+            featurePriorities = preferences[PreferencesKeys.FEATURE_PRIORITIES]
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                ?.let { list ->
+                    val set = list.toSet()
+                    list + DEFAULT_FEATURE_PRIORITIES.filter { it !in set }
+                } ?: DEFAULT_FEATURE_PRIORITIES
         )
     }
 
@@ -84,7 +110,7 @@ class SettingsRepository(private val context: Context) {
                 when (preferences[PreferencesKeys.LEGACY_ANIMATION_SPEED]) {
                     "FAST" -> 1.5f
                     "SLOW" -> 0.7f
-                    else -> 1.0f
+                    else -> 0.7f
                 }
             }
 
@@ -98,19 +124,35 @@ class SettingsRepository(private val context: Context) {
                 showOutline = preferences[PreferencesKeys.SHOW_OUTLINE] ?: true,
                 outlineColorArgb = preferences[PreferencesKeys.OUTLINE_COLOR_ARGB] ?: 0x33FFFFFF,
                 outlineThicknessDp = preferences[PreferencesKeys.OUTLINE_THICKNESS_DP] ?: 1.5f,
-                expandedScale = preferences[PreferencesKeys.EXPANDED_SCALE] ?: 1.0f,
+                expandedScale = preferences[PreferencesKeys.EXPANDED_SCALE] ?: 1.1f,
                 hapticsEnabled = preferences[PreferencesKeys.HAPTICS_ENABLED] ?: true,
                 showMedia = preferences[PreferencesKeys.SHOW_MEDIA] ?: true,
                 showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
                 showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
                 showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+                showBluetooth = preferences[PreferencesKeys.SHOW_BLUETOOTH] ?: true,
+                showCharging = preferences[PreferencesKeys.SHOW_CHARGING] ?: true,
+                showRingerMode = preferences[PreferencesKeys.SHOW_RINGER_MODE] ?: true,
                 showInLandscape = preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] ?: false,
                 animationSpeed = resolvedSpeed,
                 blockedPackages = preferences[PreferencesKeys.BLOCKED_PACKAGES] ?: emptySet(),
                 restartOnBoot = preferences[PreferencesKeys.RESTART_ON_BOOT] ?: true,
                 bubbleEffectEnabled = preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] ?: true,
                 dismissMediaOnPause = preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] ?: false,
-                alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false
+                alwaysShowPill = preferences[PreferencesKeys.ALWAYS_SHOW_PILL] ?: false,
+                showFps = preferences[PreferencesKeys.SHOW_FPS] ?: false,
+                showWeather = preferences[PreferencesKeys.SHOW_WEATHER] ?: false,
+                showNetworkSpeed = preferences[PreferencesKeys.SHOW_NETWORK_SPEED] ?: false,
+                autoDismissNotifications = preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] ?: false,
+            blurredAlbumArtBackground = preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] ?: false,
+                featurePriorities = preferences[PreferencesKeys.FEATURE_PRIORITIES]
+                    ?.split(",")
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotBlank() }
+                    ?.let { list ->
+                        val set = list.toSet()
+                        list + DEFAULT_FEATURE_PRIORITIES.filter { it !in set }
+                    } ?: DEFAULT_FEATURE_PRIORITIES
             )
 
             val newSettings = update(current)
@@ -130,6 +172,9 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_NOTIFICATIONS] = newSettings.showNotifications
             preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] = newSettings.showLiveProgress
             preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] = newSettings.showScreenRecording
+            preferences[PreferencesKeys.SHOW_BLUETOOTH] = newSettings.showBluetooth
+            preferences[PreferencesKeys.SHOW_CHARGING] = newSettings.showCharging
+            preferences[PreferencesKeys.SHOW_RINGER_MODE] = newSettings.showRingerMode
             preferences[PreferencesKeys.SHOW_IN_LANDSCAPE] = newSettings.showInLandscape
             preferences[PreferencesKeys.ANIMATION_SPEED_MULTIPLIER] = newSettings.animationSpeed
             preferences.remove(PreferencesKeys.LEGACY_ANIMATION_SPEED)
@@ -138,6 +183,12 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.BUBBLE_EFFECT_ENABLED] = newSettings.bubbleEffectEnabled
             preferences[PreferencesKeys.DISMISS_MEDIA_ON_PAUSE] = newSettings.dismissMediaOnPause
             preferences[PreferencesKeys.ALWAYS_SHOW_PILL] = newSettings.alwaysShowPill
+            preferences[PreferencesKeys.SHOW_FPS] = newSettings.showFps
+            preferences[PreferencesKeys.SHOW_WEATHER] = newSettings.showWeather
+            preferences[PreferencesKeys.SHOW_NETWORK_SPEED] = newSettings.showNetworkSpeed
+            preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] = newSettings.autoDismissNotifications
+            preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] = newSettings.blurredAlbumArtBackground
+            preferences[PreferencesKeys.FEATURE_PRIORITIES] = newSettings.featurePriorities.joinToString(",")
         }
     }
 }

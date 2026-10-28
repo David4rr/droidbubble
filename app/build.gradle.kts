@@ -11,8 +11,8 @@ android {
         applicationId = "com.droidbubble.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.1.5"
+        versionCode = 9
+        versionName = "1.2"
     }
 
     buildTypes {
@@ -95,4 +95,8 @@ dependencies {
   implementation(libs.androidx.navigation3.ui)
   implementation(libs.androidx.navigation3.runtime)
   implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+
+  // Shizuku
+  implementation("dev.rikka.shizuku:api:13.1.5")
+  implementation("dev.rikka.shizuku:provider:13.1.5")
 }

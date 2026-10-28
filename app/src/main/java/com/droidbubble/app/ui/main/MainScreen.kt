@@ -1,13 +1,41 @@
 package com.droidbubble.app.ui.main
 
+
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Drawable
+import android.net.Uri
+import android.os.Build
+import android.provider.OpenableColumns
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.toMutableStateList
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.Menu
+import android.view.HapticFeedbackConstants
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,20 +58,36 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.LockReset
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -54,12 +98,15 @@ import androidx.compose.material.icons.filled.ScreenSearchDesktop
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -70,9 +117,12 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -92,6 +142,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -99,6 +150,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -123,6 +175,14 @@ import com.droidbubble.app.service.IslandOverlayService
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+enum class MainScreenPage {
+    MAIN,
+    DIMENSIONS,
+    APPEARANCE,
+    ACCESSIBILITY
+}
+
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MainScreen(
@@ -130,6 +190,7 @@ fun MainScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val settings by viewModel.settings.collectAsState()
@@ -142,11 +203,31 @@ fun MainScreen(
     var showAppFilterSheet by remember { mutableStateOf(false) }
     var appFilterQuery by remember { mutableStateOf("") }
 
+    var showDimensionsPage by remember { mutableStateOf(false) }
+    var showAppearancePage by remember { mutableStateOf(false) }
+    var showAccessibilityPage by remember { mutableStateOf(false) }
+    var showFeedbackSheet by remember { mutableStateOf(false) }
+    var feedbackType by remember { mutableStateOf(FeedbackType.BUG) }
+    var feedbackTitle by remember { mutableStateOf("") }
+    var feedbackDescription by remember { mutableStateOf("") }
+    var attachmentUri by remember { mutableStateOf<Uri?>(null) }
+    var attachmentName by remember { mutableStateOf<String?>(null) }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            attachmentUri = uri
+            attachmentName = getAttachmentFileName(context, uri)
+        }
+    }
+
     // Re-check permissions on every onResume
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.checkPermissions(context)
+                viewModel.refreshUpdateStateOnResume(context)
                 if (settings.isEnabled && PermissionHelper.isOverlayGranted(context)) {
                     IslandOverlayService.start(context)
                 }
@@ -158,15 +239,101 @@ fun MainScreen(
         }
     }
 
-    Scaffold(
-        modifier = modifier
+    val currentNavPage = when {
+        showDimensionsPage -> MainScreenPage.DIMENSIONS
+        showAppearancePage -> MainScreenPage.APPEARANCE
+        showAccessibilityPage -> MainScreenPage.ACCESSIBILITY
+        else -> MainScreenPage.MAIN
+    }
+
+    AnimatedContent(
+        targetState = currentNavPage,
+        transitionSpec = {
+            if (targetState != MainScreenPage.MAIN) {
+                (slideInHorizontally(
+                    initialOffsetX = { fullWidth -> fullWidth },
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f)
+                ) + fadeIn(animationSpec = tween(220)))
+                    .togetherWith(
+                        slideOutHorizontally(
+                            targetOffsetX = { fullWidth -> -fullWidth / 3 },
+                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f)
+                        ) + fadeOut(animationSpec = tween(180))
+                    )
+            } else {
+                (slideInHorizontally(
+                    initialOffsetX = { fullWidth -> -fullWidth / 3 },
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f)
+                ) + fadeIn(animationSpec = tween(220)))
+                    .togetherWith(
+                        slideOutHorizontally(
+                            targetOffsetX = { fullWidth -> fullWidth },
+                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f)
+                        ) + fadeOut(animationSpec = tween(180))
+                    )
+            }
+        },
+        label = "subPageTransition"
+    ) { page ->
+        when (page) {
+            MainScreenPage.DIMENSIONS -> {
+                DimensionsPage(
+                    settings = settings,
+                    onUpdateSettings = { viewModel.updateSettings(it) },
+                    onBack = { showDimensionsPage = false },
+                    modifier = modifier
+                )
+            }
+            MainScreenPage.APPEARANCE -> {
+                AppearancePage(
+                    settings = settings,
+                    onUpdateSettings = { viewModel.updateSettings(it) },
+                    onBack = { showAppearancePage = false },
+                    modifier = modifier
+                )
+            }
+            MainScreenPage.ACCESSIBILITY -> {
+                AccessibilityPage(
+                    settings = settings,
+                    onUpdateSettings = { viewModel.updateSettings(it) },
+                    onBack = { showAccessibilityPage = false },
+                    modifier = modifier
+                )
+            }
+            MainScreenPage.MAIN -> {
+        var isDraggingIslandActivity by remember { mutableStateOf(false) }
+
+        Scaffold(
+            modifier = modifier,
+            topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                IconButton(
+                    onClick = { showFeedbackSheet = true },
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Feedback,
+                        contentDescription = "Send Feedback",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+        }
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 32.dp),
+            userScrollEnabled = !isDraggingIslandActivity,
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // SECTION 1: PERMISSIONS (Hides individual item once granted, hides whole section when all granted!)
@@ -237,7 +404,7 @@ fun MainScreen(
 
             // SECTION 2: MASTER ENABLE SWITCH
             item {
-                SettingsCardItem(position = GroupPosition.SINGLE) {
+                SettingsCardItem(position = GroupPosition.SINGLE, isActive = settings.isEnabled) {
                     ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = { Text("Enable Island", fontWeight = FontWeight.SemiBold) },
@@ -265,7 +432,7 @@ fun MainScreen(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(28.dp))
                         .clickable(enabled = !isDownloading && !isChecking) {
                             if (isAvailable) {
                                 viewModel.openUpdateSheet()
@@ -273,7 +440,7 @@ fun MainScreen(
                                 viewModel.checkForUpdates(context)
                             }
                         },
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                     shadowElevation = 2.dp
@@ -282,7 +449,6 @@ fun MainScreen(
                         colors = ListItemDefaults.colors(
                             containerColor = Color.Transparent,
                             headlineColor = MaterialTheme.colorScheme.onPrimary,
-                            supportingColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
                             leadingIconColor = MaterialTheme.colorScheme.onPrimary,
                             trailingIconColor = MaterialTheme.colorScheme.onPrimary
                         ),
@@ -304,19 +470,6 @@ fun MainScreen(
                                 },
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
-                            )
-                        },
-                        supportingContent = {
-                            Text(
-                                text = when (updateState) {
-                                    is MainScreenViewModel.UpdateState.UpToDate -> "You're running the latest release (v1.1.5)"
-                                    is MainScreenViewModel.UpdateState.Available -> "Tap to review & install update"
-                                    is MainScreenViewModel.UpdateState.Downloading -> "Installing will start automatically"
-                                    is MainScreenViewModel.UpdateState.Checking -> "Connecting to GitHub releases..."
-                                    is MainScreenViewModel.UpdateState.Error -> (updateState as MainScreenViewModel.UpdateState.Error).message
-                                    else -> "Tap to check for new releases on GitHub"
-                                },
-                                fontSize = 12.sp
                             )
                         },
                         leadingContent = {
@@ -374,98 +527,76 @@ fun MainScreen(
                 }
             }
 
-            // SECTION 3: GEOMETRY SLIDERS (Separated items, 4.dp gap, inner square-ish outer rounded)
-            item {
-                SectionHeader(
-                    title = "Island Dimensions",
-                    icon = Icons.Default.Straighten
-                )
-            }
-
+            // TABS: ISLAND DIMENSIONS & APPEARANCE
             item {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     SettingsCardItem(position = GroupPosition.TOP) {
-                        SliderSettingItem(
-                            label = "Width",
-                            value = settings.widthDp.toFloat(),
-                            unit = "dp",
-                            valueRange = 50f..260f,
-                            onValueChange = { viewModel.updateSettings { s -> s.copy(widthDp = it.roundToInt()) } }
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.clickable { showDimensionsPage = true },
+                            headlineContent = { Text("Island Dimensions", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.Straighten, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                    contentDescription = "Open Island Dimensions",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         )
                     }
 
                     SettingsCardItem(position = GroupPosition.MIDDLE) {
-                        SliderSettingItem(
-                            label = "Height",
-                            value = settings.heightDp.toFloat(),
-                            unit = "dp",
-                            valueRange = 12f..56f,
-                            onValueChange = { viewModel.updateSettings { s -> s.copy(heightDp = it.roundToInt()) } }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
-                        SliderSettingItem(
-                            label = "Corner Radius",
-                            value = settings.cornerRadiusDp.toFloat(),
-                            unit = "dp",
-                            valueRange = 10f..28f,
-                            onValueChange = { viewModel.updateSettings { s -> s.copy(cornerRadiusDp = it.roundToInt()) } }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
-                        SliderSettingItem(
-                            label = "Top Offset (Notch Line-up)",
-                            value = settings.topOffsetDp.toFloat(),
-                            unit = "dp",
-                            valueRange = 0f..60f,
-                            onValueChange = { viewModel.updateSettings { s -> s.copy(topOffsetDp = it.roundToInt()) } }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
-                        SliderSettingItem(
-                            label = "Horizontal Offset",
-                            value = settings.horizontalOffsetDp.toFloat(),
-                            unit = "dp",
-                            valueRange = -50f..50f,
-                            onValueChange = { viewModel.updateSettings { s -> s.copy(horizontalOffsetDp = it.roundToInt()) } }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
-                        SliderSettingItem(
-                            label = "Expanded Card Scale",
-                            value = settings.expandedScale,
-                            unit = "x",
-                            valueRange = 0.8f..1.3f,
-                            steps = 5,
-                            onValueChange = { viewModel.updateSettings { s -> s.copy(expandedScale = (it * 10).roundToInt() / 10f) } }
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.clickable { showAppearancePage = true },
+                            headlineContent = { Text("Appearance & Feedback", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                    contentDescription = "Open Appearance & Feedback",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         )
                     }
 
                     SettingsCardItem(position = GroupPosition.BOTTOM) {
-                        SliderSettingItem(
-                            label = "Animation Speed",
-                            value = settings.animationSpeed,
-                            unit = "x",
-                            valueRange = 0.5f..2.0f,
-                            steps = 14,
-                            onValueChange = { viewModel.updateSettings { s -> s.copy(animationSpeed = (it * 10).roundToInt() / 10f) } }
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.clickable { showAccessibilityPage = true },
+                            headlineContent = { Text("Accessibility", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.Accessibility, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                    contentDescription = "Open Accessibility",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         )
                     }
                 }
             }
 
-            // SECTION 4: APPEARANCE & FEEDBACK
+            // SECTION 5A: SYSTEM ALERTS & INDICATORS (ALWAYS TOP PRIORITY)
             item {
                 SectionHeader(
-                    title = "Appearance & Feedback",
-                    icon = Icons.Default.Palette
+                    title = "System Alerts",
+                    icon = Icons.Default.NotificationsActive
                 )
             }
 
@@ -474,110 +605,54 @@ fun MainScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    val outlineActive = settings.showOutline
-                    SettingsCardItem(position = if (outlineActive) GroupPosition.TOP else GroupPosition.SINGLE) {
+                    SettingsCardItem(position = GroupPosition.TOP, isActive = settings.showBluetooth) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Island Outline", fontWeight = FontWeight.SemiBold) },
+                            headlineContent = { Text("Bluetooth Connecting", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.CropSquare, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.Bluetooth, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = settings.showOutline,
+                                    checked = settings.showBluetooth,
                                     onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showOutline = show) }
+                                        viewModel.updateSettings { it.copy(showBluetooth = show) }
                                     }
                                 )
                             }
                         )
                     }
 
-                    if (outlineActive) {
-                        SettingsCardItem(position = GroupPosition.BOTTOM) {
-                            SliderSettingItem(
-                                label = "Outline Thickness",
-                                value = settings.outlineThicknessDp,
-                                unit = "dp",
-                                valueRange = 0.5f..4.0f,
-                                onValueChange = { viewModel.updateSettings { s -> s.copy(outlineThicknessDp = (it * 10).roundToInt() / 10f) } }
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    SettingsCardItem(position = GroupPosition.TOP) {
+                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.showCharging) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Bubble Effect", fontWeight = FontWeight.SemiBold) },
+                            headlineContent = { Text("Charging Indicator", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.RoundedCorner, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = settings.bubbleEffectEnabled,
-                                    onCheckedChange = { enabled ->
-                                        viewModel.updateSettings { it.copy(bubbleEffectEnabled = enabled) }
+                                    checked = settings.showCharging,
+                                    onCheckedChange = { show ->
+                                        viewModel.updateSettings { it.copy(showCharging = show) }
                                     }
                                 )
                             }
                         )
                     }
 
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = settings.showRingerMode) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Always Show Pill", fontWeight = FontWeight.SemiBold) },
+                            headlineContent = { Text("Ring Modes", fontWeight = FontWeight.SemiBold) },
                             leadingContent = {
-                                Icon(Icons.Default.FitScreen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = settings.alwaysShowPill,
-                                    onCheckedChange = { alwaysShow ->
-                                        viewModel.updateSettings { it.copy(alwaysShowPill = alwaysShow) }
-                                    }
-                                )
-                            }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
-                            leadingContent = {
-                                Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.hapticsEnabled,
-                                    onCheckedChange = { haptics ->
-                                        viewModel.updateSettings { it.copy(hapticsEnabled = haptics) }
-                                    }
-                                )
-                            }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.BOTTOM) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Show in Landscape", fontWeight = FontWeight.SemiBold) },
-                            leadingContent = {
-                                Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.showInLandscape,
-                                    onCheckedChange = { inLandscape ->
-                                        viewModel.updateSettings { it.copy(showInLandscape = inLandscape) }
+                                    checked = settings.showRingerMode,
+                                    onCheckedChange = { show ->
+                                        viewModel.updateSettings { it.copy(showRingerMode = show) }
                                     }
                                 )
                             }
@@ -586,70 +661,233 @@ fun MainScreen(
                 }
             }
 
-            // SECTION 5: FEATURES
+            // SECTION 5B: ISLAND ACTIVITIES (DRAG TO REORDER PRIORITY)
             item {
                 SectionHeader(
-                    title = "Island Features",
+                    title = "Island Activities",
                     icon = Icons.Default.Apps
                 )
             }
 
             item {
+                val reorderableKeys = remember(settings.featurePriorities) {
+                    val valid = listOf("MEDIA", "NOTIFICATION", "PROGRESS", "RECORDING")
+                    val list = settings.featurePriorities.filter { it in valid }.toMutableList()
+                    for (v in valid) {
+                        if (v !in list) list.add(v)
+                    }
+                    list.toMutableStateList()
+                }
+                var draggingKey by remember { mutableStateOf<String?>(null) }
+                var dragOffset by remember { mutableStateOf(0f) }
+
                 Column(
                     modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    reorderableKeys.forEachIndexed { index, featureKey ->
+                        key(featureKey) {
+                            val currentKey = featureKey
+                            val isBeingDragged = draggingKey == currentKey
+                            val zIdx = if (isBeingDragged) 10f else 1f
+                            val itemPosition = when {
+                                index == 0 -> GroupPosition.TOP
+                                index == reorderableKeys.size - 1 -> GroupPosition.BOTTOM
+                                else -> GroupPosition.MIDDLE
+                            }
+
+                            val isFeatureChecked = when (currentKey) {
+                                "MEDIA" -> settings.showMedia
+                                "NOTIFICATION" -> settings.showNotifications
+                                "PROGRESS" -> settings.showLiveProgress
+                                "RECORDING" -> settings.showScreenRecording
+                                else -> false
+                            }
+
+                            val featureTitle = when (currentKey) {
+                                "MEDIA" -> "Media Player"
+                                "NOTIFICATION" -> "Incoming Notifications"
+                                "PROGRESS" -> "Live Progress & Activities"
+                                "RECORDING" -> "Screen Recording Indicator"
+                                else -> currentKey
+                            }
+
+                            val featureIcon = when (currentKey) {
+                                "MEDIA" -> Icons.Default.MusicNote
+                                "NOTIFICATION" -> Icons.Default.Notifications
+                                "PROGRESS" -> Icons.Default.Animation
+                                "RECORDING" -> Icons.Default.Videocam
+                                else -> Icons.Default.Apps
+                            }
+
+                            val cardModifier = if (isBeingDragged) {
+                                Modifier
+                                    .fillMaxWidth()
+                                    .zIndex(zIdx)
+                                    .graphicsLayer {
+                                        translationY = dragOffset
+                                        scaleX = 1.02f
+                                        scaleY = 1.02f
+                                        shadowElevation = 14.dp.toPx()
+                                    }
+                            } else {
+                                Modifier
+                                    .fillMaxWidth()
+                                    .zIndex(zIdx)
+                            }
+
+                            SettingsCardItem(
+                                position = itemPosition,
+                                modifier = cardModifier,
+                                isActive = isFeatureChecked
+                            ) {
+                                ListItem(
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    headlineContent = { Text(featureTitle, fontWeight = FontWeight.SemiBold) },
+                                    leadingContent = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .pointerInput(currentKey) {
+                                                        detectVerticalDragGestures(
+                                                            onDragStart = {
+                                                                isDraggingIslandActivity = true
+                                                                draggingKey = currentKey
+                                                                dragOffset = 0f
+                                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                                            },
+                                                            onDragEnd = {
+                                                                if (draggingKey != null) {
+                                                                    viewModel.updateSettings { it.copy(featurePriorities = reorderableKeys.toList()) }
+                                                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                                                }
+                                                                draggingKey = null
+                                                                isDraggingIslandActivity = false
+                                                                dragOffset = 0f
+                                                            },
+                                                            onDragCancel = {
+                                                                draggingKey = null
+                                                                isDraggingIslandActivity = false
+                                                                dragOffset = 0f
+                                                            },
+                                                            onVerticalDrag = { change, dragAmount ->
+                                                                change.consume()
+                                                                dragOffset += dragAmount
+                                                                val curIdx = reorderableKeys.indexOf(draggingKey)
+                                                                if (curIdx != -1) {
+                                                                    val cardHeight = 64.dp.toPx()
+                                                                    if (dragOffset > cardHeight && curIdx < reorderableKeys.size - 1) {
+                                                                        val item = reorderableKeys.removeAt(curIdx)
+                                                                        reorderableKeys.add(curIdx + 1, item)
+                                                                        dragOffset -= cardHeight
+                                                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                                                    } else if (dragOffset < -cardHeight && curIdx > 0) {
+                                                                        val item = reorderableKeys.removeAt(curIdx)
+                                                                        reorderableKeys.add(curIdx - 1, item)
+                                                                        dragOffset += cardHeight
+                                                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                                                    }
+                                                                }
+                                                            }
+                                                        )
+                                                    }
+                                                    .padding(end = 4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Menu,
+                                                    contentDescription = "Drag to reorder",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            Icon(
+                                                imageVector = featureIcon,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    trailingContent = {
+                                        Switch(
+                                            checked = isFeatureChecked,
+                                            onCheckedChange = { checked ->
+                                                viewModel.updateSettings { s ->
+                                                    when (currentKey) {
+                                                        "MEDIA" -> s.copy(showMedia = checked)
+                                                        "NOTIFICATION" -> s.copy(showNotifications = checked)
+                                                        "PROGRESS" -> s.copy(showLiveProgress = checked)
+                                                        "RECORDING" -> s.copy(showScreenRecording = checked)
+                                                        else -> s
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+                                )
+                            }
+
+                            // If notifications is enabled and this is the notification item, show Per-App Filter button
+                            if (currentKey == "NOTIFICATION" && settings.showNotifications) {
+                                SettingsCardItem(position = GroupPosition.MIDDLE) {
+                                    ListItem(
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                        headlineContent = { Text("Per-App Notification Filter", fontWeight = FontWeight.SemiBold) },
+                                        leadingContent = {
+                                            Icon(Icons.Default.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        },
+                                        trailingContent = {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    viewModel.loadInstalledApps(context)
+                                                    showAppFilterSheet = true
+                                                },
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Text("Filter Apps")
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // SECTION 6: PERSISTENT ISLAND VIEWS
+            item {
+                SectionHeader(
+                    title = "Persistent Island Views",
+                    icon = Icons.Default.Widgets,
+                    badge = "Coming soon",
+                    badgeColor = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .alpha(0.5f),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     SettingsCardItem(position = GroupPosition.TOP) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Media Player", fontWeight = FontWeight.SemiBold) },
+                            headlineContent = {
+                                Text("FPS Counter", fontWeight = FontWeight.SemiBold)
+                            },
                             leadingContent = {
-                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.Speed, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = settings.showMedia,
-                                    onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showMedia = show) }
-                                    }
-                                )
-                            }
-                        )
-                    }
-
-                    if (settings.showMedia) {
-                        SettingsCardItem(position = GroupPosition.MIDDLE) {
-                            ListItem(
-                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                headlineContent = { Text("Dismiss on Pause", fontWeight = FontWeight.SemiBold) },
-                                leadingContent = {
-                                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                },
-                                trailingContent = {
-                                    Switch(
-                                        checked = settings.dismissMediaOnPause,
-                                        onCheckedChange = { dismiss ->
-                                            viewModel.updateSettings { it.copy(dismissMediaOnPause = dismiss) }
-                                        }
-                                    )
-                                }
-                            )
-                        }
-                    }
-
-                    SettingsCardItem(position = GroupPosition.MIDDLE) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Incoming Notifications", fontWeight = FontWeight.SemiBold) },
-                            leadingContent = {
-                                Icon(Icons.Default.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.showNotifications,
-                                    onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showNotifications = show) }
-                                    }
+                                    checked = false,
+                                    onCheckedChange = null,
+                                    enabled = false
                                 )
                             }
                         )
@@ -658,57 +896,36 @@ fun MainScreen(
                     SettingsCardItem(position = GroupPosition.MIDDLE) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Live Progress & Activities", fontWeight = FontWeight.SemiBold) },
+                            headlineContent = {
+                                Text("Weather & Temperature", fontWeight = FontWeight.SemiBold)
+                            },
                             leadingContent = {
-                                Icon(Icons.Default.Animation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.WbSunny, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = settings.showLiveProgress,
-                                    onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showLiveProgress = show) }
-                                    }
+                                    checked = false,
+                                    onCheckedChange = null,
+                                    enabled = false
                                 )
                             }
                         )
-                    }
-
-                    if (settings.showNotifications || settings.showLiveProgress) {
-                        SettingsCardItem(position = GroupPosition.MIDDLE) {
-                            ListItem(
-                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                headlineContent = { Text("Per-App Notification Filter", fontWeight = FontWeight.SemiBold) },
-                                leadingContent = {
-                                    Icon(Icons.Default.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                },
-                                trailingContent = {
-                                    OutlinedButton(
-                                        onClick = {
-                                            viewModel.loadInstalledApps(context)
-                                            showAppFilterSheet = true
-                                        },
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Text("Filter Apps")
-                                    }
-                                }
-                            )
-                        }
                     }
 
                     SettingsCardItem(position = GroupPosition.BOTTOM) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Screen Recording Indicator", fontWeight = FontWeight.SemiBold) },
+                            headlineContent = {
+                                Text("Wi-Fi & Network Speed", fontWeight = FontWeight.SemiBold)
+                            },
                             leadingContent = {
-                                Icon(Icons.Default.Videocam, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = settings.showScreenRecording,
-                                    onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showScreenRecording = show) }
-                                    }
+                                    checked = false,
+                                    onCheckedChange = null,
+                                    enabled = false
                                 )
                             }
                         )
@@ -721,6 +938,9 @@ fun MainScreen(
             }
         }
     }
+        }
+    }
+}
 
     // App Filter Modal Bottom Sheet
     if (showAppFilterSheet) {
@@ -947,6 +1167,261 @@ fun MainScreen(
             }
         }
     }
+
+    // Feedback Bottom Sheet Dialog
+    if (showFeedbackSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showFeedbackSheet = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Header
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Send Feedback",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Report a bug or share your feature ideas for Droidbubble.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Category Selection: Bug Report vs Feature Suggestion
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = feedbackType == FeedbackType.BUG,
+                        onClick = { feedbackType = FeedbackType.BUG },
+                        label = { Text("Bug Report", fontWeight = FontWeight.SemiBold) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.BugReport,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = feedbackType == FeedbackType.FEATURE,
+                        onClick = { feedbackType = FeedbackType.FEATURE },
+                        label = { Text("Feature Idea", fontWeight = FontWeight.SemiBold) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Lightbulb,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Subject / Title input
+                OutlinedTextField(
+                    value = feedbackTitle,
+                    onValueChange = { feedbackTitle = it },
+                    label = { Text("Subject") },
+                    placeholder = {
+                        Text(
+                            if (feedbackType == FeedbackType.BUG) "e.g. Media progress slider glitch"
+                            else "e.g. Add lock screen island support"
+                        )
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Detailed Description input
+                OutlinedTextField(
+                    value = feedbackDescription,
+                    onValueChange = { feedbackDescription = it },
+                    label = { Text("Description *") },
+                    placeholder = {
+                        Text(
+                            if (feedbackType == FeedbackType.BUG) "Describe what happened and how to reproduce it..."
+                            else "Describe your idea and how it should work..."
+                        )
+                    },
+                    minLines = 4,
+                    maxLines = 7,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Attachment Section (optional)
+                if (attachmentUri == null) {
+                    OutlinedButton(
+                        onClick = { filePickerLauncher.launch("*/*") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Add Attachment (Screenshot / Log)", fontSize = 13.sp)
+                    }
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.AttachFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = attachmentName ?: "Attached file",
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = {
+                                    attachmentUri = null
+                                    attachmentName = null
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Remove attachment",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Buttons: Cancel & Send Email
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { showFeedbackSheet = false },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("Cancel")
+                    }
+
+                    Button(
+                        onClick = {
+                            val subject = "[Droidbubble ${if (feedbackType == FeedbackType.BUG) "Bug" else "Feature"}] ${feedbackTitle.ifBlank { if (feedbackType == FeedbackType.BUG) "Bug Report" else "Feature Suggestion" }}"
+                            val body = buildString {
+                                appendLine("Type: ${if (feedbackType == FeedbackType.BUG) "Bug Report" else "Feature Suggestion"}")
+                                if (feedbackTitle.isNotBlank()) {
+                                    appendLine("Subject: $feedbackTitle")
+                                }
+                                appendLine()
+                                appendLine("Description:")
+                                appendLine(feedbackDescription.trim())
+                                appendLine()
+                                appendLine("----------------------------------------")
+                                appendLine("Device & App Info:")
+                                appendLine("Droidbubble Version: ${com.droidbubble.app.util.UpdateManager.getCurrentVersion(context)} (${context.packageName})")
+                                appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE})")
+                                appendLine("Android Version: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+                                appendLine("Island Enabled: ${settings.isEnabled}")
+                                appendLine("----------------------------------------")
+                            }
+
+                            val hasAttachment = attachmentUri != null
+                            val emailIntent = if (hasAttachment) {
+                                Intent(Intent.ACTION_SEND).apply {
+                                    type = context.contentResolver.getType(attachmentUri!!) ?: "*/*"
+                                    putExtra(Intent.EXTRA_EMAIL, arrayOf("velocityniele@gmail.com"))
+                                    putExtra(Intent.EXTRA_SUBJECT, subject)
+                                    putExtra(Intent.EXTRA_TEXT, body)
+                                    putExtra(Intent.EXTRA_STREAM, attachmentUri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                            } else {
+                                Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:velocityniele@gmail.com")).apply {
+                                    putExtra(Intent.EXTRA_EMAIL, arrayOf("velocityniele@gmail.com"))
+                                    putExtra(Intent.EXTRA_SUBJECT, subject)
+                                    putExtra(Intent.EXTRA_TEXT, body)
+                                }
+                            }
+
+                            // Copy details to clipboard as backup in case user wants to paste elsewhere
+                            try {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("Droidbubble Feedback", body))
+                            } catch (_: Exception) {}
+
+                            val gmailIntent = Intent(emailIntent).setPackage("com.google.android.gm").apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                if (hasAttachment) {
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                            }
+
+                            try {
+                                if (context.packageManager.resolveActivity(gmailIntent, 0) != null) {
+                                    context.startActivity(gmailIntent)
+                                    Toast.makeText(context, "Opening Gmail to send to velocityniele@gmail.com", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val chooser = Intent.createChooser(emailIntent, "Send Feedback via Email").apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        if (hasAttachment) {
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                    }
+                                    context.startActivity(chooser)
+                                    Toast.makeText(context, "Choose email client to send to velocityniele@gmail.com", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (_: Exception) {
+                                val fallback = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:velocityniele@gmail.com?subject=" + Uri.encode(subject) + "&body=" + Uri.encode(body))).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                runCatching {
+                                    context.startActivity(fallback)
+                                    Toast.makeText(context, "Opening mail client...", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+
+                            feedbackTitle = ""
+                            feedbackDescription = ""
+                            attachmentUri = null
+                            attachmentName = null
+                            showFeedbackSheet = false
+                        },
+                        enabled = feedbackDescription.isNotBlank(),
+                        modifier = Modifier.weight(1.5f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Send Email")
+                    }
+                }
+            }
+        }
+    }
+
+
 }
 
 @Composable
@@ -1029,13 +1504,29 @@ fun getGroupedShape(position: GroupPosition): RoundedCornerShape {
 fun SettingsCardItem(
     position: GroupPosition,
     modifier: Modifier = Modifier,
+    isActive: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    val effectiveShape = if (isActive) {
+        RoundedCornerShape(20.dp)
+    } else {
+        getGroupedShape(position)
+    }
+
+    val animatedColor by animateColorAsState(
+        targetValue = if (isActive) {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        label = "itemBgColor"
+    )
+
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = getGroupedShape(position),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp
+        shape = effectiveShape,
+        color = animatedColor,
+        tonalElevation = if (isActive) 3.dp else 1.dp
     ) {
         content()
     }
@@ -1088,5 +1579,403 @@ fun SliderSettingItem(
             steps = steps,
             modifier = Modifier.height(24.dp)
         )
+    }
+}
+
+enum class FeedbackType {
+    BUG,
+    FEATURE
+}
+
+private fun getAttachmentFileName(context: Context, uri: Uri): String {
+    var name = "attachment"
+    try {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (cursor.moveToFirst() && nameIndex >= 0) {
+                name = cursor.getString(nameIndex)
+            }
+        }
+    } catch (_: Exception) {
+    }
+    return name
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DimensionsPage(
+    settings: IslandSettings,
+    onUpdateSettings: ((IslandSettings) -> IslandSettings) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BackHandler(onBack = onBack)
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("Island Dimensions", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SettingsCardItem(position = GroupPosition.TOP) {
+                        SliderSettingItem(
+                            label = "Width",
+                            value = settings.widthDp.toFloat(),
+                            unit = "dp",
+                            valueRange = 50f..260f,
+                            onValueChange = { onUpdateSettings { s -> s.copy(widthDp = it.roundToInt()) } }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        SliderSettingItem(
+                            label = "Height",
+                            value = settings.heightDp.toFloat(),
+                            unit = "dp",
+                            valueRange = 12f..56f,
+                            onValueChange = { onUpdateSettings { s -> s.copy(heightDp = it.roundToInt()) } }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        SliderSettingItem(
+                            label = "Corner Radius",
+                            value = settings.cornerRadiusDp.toFloat(),
+                            unit = "dp",
+                            valueRange = 10f..28f,
+                            onValueChange = { onUpdateSettings { s -> s.copy(cornerRadiusDp = it.roundToInt()) } }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        SliderSettingItem(
+                            label = "Top Offset (Notch Line-up)",
+                            value = settings.topOffsetDp.toFloat(),
+                            unit = "dp",
+                            valueRange = 0f..60f,
+                            onValueChange = { onUpdateSettings { s -> s.copy(topOffsetDp = it.roundToInt()) } }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        SliderSettingItem(
+                            label = "Horizontal Offset",
+                            value = settings.horizontalOffsetDp.toFloat(),
+                            unit = "dp",
+                            valueRange = -50f..50f,
+                            onValueChange = { onUpdateSettings { s -> s.copy(horizontalOffsetDp = it.roundToInt()) } }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
+                        SliderSettingItem(
+                            label = "Expanded Card Scale",
+                            value = settings.expandedScale,
+                            unit = "x",
+                            valueRange = 0.8f..1.3f,
+                            steps = 5,
+                            onValueChange = { onUpdateSettings { s -> s.copy(expandedScale = (it * 10).roundToInt() / 10f) } }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM) {
+                        SliderSettingItem(
+                            label = "Animation Speed",
+                            value = settings.animationSpeed,
+                            unit = "x",
+                            valueRange = 0.5f..2.0f,
+                            steps = 14,
+                            onValueChange = { onUpdateSettings { s -> s.copy(animationSpeed = (it * 10).roundToInt() / 10f) } }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppearancePage(
+    settings: IslandSettings,
+    onUpdateSettings: ((IslandSettings) -> IslandSettings) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BackHandler(onBack = onBack)
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("Appearance & Feedback", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val outlineActive = settings.showOutline
+                    SettingsCardItem(position = if (outlineActive) GroupPosition.TOP else GroupPosition.SINGLE, isActive = settings.showOutline) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Island Outline", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.CropSquare, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.showOutline,
+                                    onCheckedChange = { show ->
+                                        onUpdateSettings { it.copy(showOutline = show) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    if (outlineActive) {
+                        SettingsCardItem(position = GroupPosition.BOTTOM) {
+                            SliderSettingItem(
+                                label = "Outline Thickness",
+                                value = settings.outlineThicknessDp,
+                                unit = "dp",
+                                valueRange = 0.5f..4.0f,
+                                onValueChange = { onUpdateSettings { s -> s.copy(outlineThicknessDp = (it * 10).roundToInt() / 10f) } }
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SettingsCardItem(position = GroupPosition.TOP, isActive = settings.bubbleEffectEnabled) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Bubble Effect", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.RoundedCorner, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.bubbleEffectEnabled,
+                                    onCheckedChange = { enabled ->
+                                        onUpdateSettings { it.copy(bubbleEffectEnabled = enabled) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.alwaysShowPill) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Always Show Pill", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.FitScreen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.alwaysShowPill,
+                                    onCheckedChange = { alwaysShow ->
+                                        onUpdateSettings { it.copy(alwaysShowPill = alwaysShow) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.hapticsEnabled) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Haptic Feedback", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.Vibration, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.hapticsEnabled,
+                                    onCheckedChange = { haptics ->
+                                        onUpdateSettings { it.copy(hapticsEnabled = haptics) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.showInLandscape) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Show in Landscape", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.showInLandscape,
+                                    onCheckedChange = { inLandscape ->
+                                        onUpdateSettings { it.copy(showInLandscape = inLandscape) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = settings.blurredAlbumArtBackground) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Blurred Album Art Background", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.blurredAlbumArtBackground,
+                                    onCheckedChange = { blurred ->
+                                        onUpdateSettings { it.copy(blurredAlbumArtBackground = blurred) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AccessibilityPage(
+    settings: IslandSettings,
+    onUpdateSettings: ((IslandSettings) -> IslandSettings) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BackHandler(onBack = onBack)
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("Accessibility", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SettingsCardItem(position = GroupPosition.TOP, isActive = settings.autoDismissNotifications) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Auto-Dismiss Notifications", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text("Dismiss notification cards automatically after 3 seconds") },
+                            leadingContent = {
+                                Icon(Icons.Default.Timer, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.autoDismissNotifications,
+                                    onCheckedChange = { autoDismiss ->
+                                        onUpdateSettings { it.copy(autoDismissNotifications = autoDismiss) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = settings.dismissMediaOnPause) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Dismiss on Pause", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text("Automatically hide the media player island when playback is paused") },
+                            leadingContent = {
+                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.dismissMediaOnPause,
+                                    onCheckedChange = { dismiss ->
+                                        onUpdateSettings { it.copy(dismissMediaOnPause = dismiss) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 }

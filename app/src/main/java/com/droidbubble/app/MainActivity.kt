@@ -1,6 +1,8 @@
 package com.droidbubble.app
 
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -17,7 +19,7 @@ import com.droidbubble.app.theme.DroidbubbleTheme
 import com.droidbubble.app.ui.main.MainScreen
 import com.droidbubble.app.ui.main.MainScreenViewModel
 import com.droidbubble.app.ui.main.PermissionHelper
-
+import android.content.Intent
 class MainActivity : ComponentActivity() {
 
     private val viewModel by viewModels<MainScreenViewModel>(
@@ -39,6 +41,9 @@ class MainActivity : ComponentActivity() {
         if (PermissionHelper.isOverlayGranted(this)) {
             IslandOverlayService.start(this)
         }
+        if (intent.getBooleanExtra("EXTRA_SHOW_UPDATE", false)) {
+            viewModel.checkForUpdates(this)
+        }
 
         setContent {
             DroidbubbleTheme {
@@ -49,6 +54,15 @@ class MainActivity : ComponentActivity() {
                     MainScreen(viewModel = viewModel)
                 }
             }
+        }
+    }
+
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("EXTRA_SHOW_UPDATE", false)) {
+            viewModel.checkForUpdates(this)
         }
     }
 

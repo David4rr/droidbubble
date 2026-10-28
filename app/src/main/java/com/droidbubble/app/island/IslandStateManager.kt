@@ -4,6 +4,9 @@ import com.droidbubble.app.model.IslandPriority
 import com.droidbubble.app.model.MediaInfo
 import com.droidbubble.app.model.NotificationInfo
 import com.droidbubble.app.model.ScreenRecordingState
+import com.droidbubble.app.model.FpsInfo
+import com.droidbubble.app.model.WeatherInfo
+import com.droidbubble.app.model.NetworkSpeedInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +40,16 @@ object IslandStateManager {
     val isBluetoothConnected: StateFlow<Boolean> = _isBluetoothConnected.asStateFlow()
     private var bluetoothJob: Job? = null
 
+    enum class RingerMode {
+        SILENT,
+        VIBRATE,
+        RING
+    }
+
+    private val _activeRingerMode = MutableStateFlow<RingerMode?>(null)
+    val activeRingerMode: StateFlow<RingerMode?> = _activeRingerMode.asStateFlow()
+    private var ringerJob: Job? = null
+
     private val _activeMedia = MutableStateFlow<MediaInfo?>(null)
     val activeMedia: StateFlow<MediaInfo?> = _activeMedia.asStateFlow()
 
@@ -51,6 +64,33 @@ object IslandStateManager {
 
     private val _isExpanded = MutableStateFlow(false)
     val isExpanded: StateFlow<Boolean> = _isExpanded.asStateFlow()
+
+    private val _fpsInfo = MutableStateFlow(FpsInfo())
+    val fpsInfo: StateFlow<FpsInfo> = _fpsInfo.asStateFlow()
+
+    fun updateFps(info: FpsInfo) {
+        if (_fpsInfo.value != info) {
+            _fpsInfo.value = info
+        }
+    }
+
+    private val _weatherInfo = MutableStateFlow(WeatherInfo())
+    val weatherInfo: StateFlow<WeatherInfo> = _weatherInfo.asStateFlow()
+
+    fun updateWeather(info: WeatherInfo) {
+        if (_weatherInfo.value != info) {
+            _weatherInfo.value = info
+        }
+    }
+
+    private val _networkSpeedInfo = MutableStateFlow(NetworkSpeedInfo())
+    val networkSpeedInfo: StateFlow<NetworkSpeedInfo> = _networkSpeedInfo.asStateFlow()
+
+    fun updateNetworkSpeed(info: NetworkSpeedInfo) {
+        if (_networkSpeedInfo.value != info) {
+            _networkSpeedInfo.value = info
+        }
+    }
 
     private val _expandedPriority = MutableStateFlow<IslandPriority?>(null)
     val expandedPriority: StateFlow<IslandPriority?> = _expandedPriority.asStateFlow()
@@ -73,6 +113,7 @@ object IslandStateManager {
     var onSkipNext: (() -> Unit)? = null
     var onSkipPrevious: (() -> Unit)? = null
     var onSeekTo: ((Long) -> Unit)? = null
+    var onToggleLike: (() -> Unit)? = null
 
     var dismissedMediaPackage: String? = null
         private set
@@ -107,6 +148,8 @@ object IslandStateManager {
         get() = _activeNotification.value != null
 
     var dismissMediaOnPause: Boolean = false
+    var autoDismissNotifications: Boolean = false
+    private var autoDismissNotificationJob: Job? = null
 
     val isMediaActive: Boolean
         get() {
@@ -131,8 +174,11 @@ object IslandStateManager {
     val isFlashlightActive: Boolean
         get() = _isFlashlightOn.value
 
+    val isRingerModeActive: Boolean
+        get() = _activeRingerMode.value != null
+
     val isOccupied: Boolean
-        get() = isRecordingActive || isNotificationActive || isMediaActive || isProgressActive || isChargingActive || isUnlockActive || isBluetoothActive || isFlashlightActive
+        get() = isRecordingActive || isNotificationActive || isMediaActive || isProgressActive || isChargingActive || isUnlockActive || isBluetoothActive || isFlashlightActive || isRingerModeActive
 
     // Live priority determination: Media is always primary, then Flashlight right after media player, then Progress, Screen Recording, and Notification alerts last
     val currentPriority: IslandPriority
@@ -196,6 +242,17 @@ object IslandStateManager {
             delay(1500) // 1.5 seconds exact same as unlock
             _isBluetoothConnected.value = false
             android.util.Log.d("IslandStateManager", "triggerBluetoothEvent() finished: isBluetoothConnected reset to false")
+        }
+    }
+
+    fun triggerRingerModeEvent(mode: RingerMode) {
+        android.util.Log.d("IslandStateManager", "triggerRingerModeEvent($mode) invoked for 1500ms")
+        ringerJob?.cancel()
+        _activeRingerMode.value = mode
+        ringerJob = scope.launch {
+            delay(1500) // Should last only 1.5 seconds on screen as requested!
+            _activeRingerMode.value = null
+            android.util.Log.d("IslandStateManager", "triggerRingerModeEvent finished: reset to null")
         }
     }
 
@@ -264,6 +321,7 @@ object IslandStateManager {
             updateProgress(notification)
             return
         }
+        autoDismissNotificationJob?.cancel()
         _activeNotification.value = notification
         if (notification == null) {
             _isPopInActive.value = false
@@ -276,6 +334,15 @@ object IslandStateManager {
             }
         } else {
             triggerPopIn()
+            if (autoDismissNotifications) {
+                val notifKey = notification.key
+                autoDismissNotificationJob = scope.launch {
+                    delay(3000)
+                    if (_activeNotification.value?.key == notifKey && (!_isExpanded.value || _expandedPriority.value != IslandPriority.POP_NOTIFICATION)) {
+                        dismissCurrentNotification()
+                    }
+                }
+            }
         }
     }
 
@@ -295,6 +362,7 @@ object IslandStateManager {
     fun removeNotification(key: String) {
         var removed = false
         if (_activeNotification.value?.key == key) {
+            autoDismissNotificationJob?.cancel()
             _activeNotification.value = null
             _isPopInActive.value = false
             removed = true
@@ -318,8 +386,9 @@ object IslandStateManager {
     }
 
     fun dismissCurrentNotification(): Boolean {
+        autoDismissNotificationJob?.cancel()
         val notif = _activeNotification.value ?: return false
-        onDismissNotification?.invoke(notif.key)
+        // Dismiss card only, without cancelling actual system notification
         _activeNotification.value = null
         _isPopInActive.value = false
         if (_isExpanded.value && (_expandedPriority.value == IslandPriority.POP_NOTIFICATION || !isOccupied)) {
@@ -334,7 +403,7 @@ object IslandStateManager {
 
     fun dismissProgress(): Boolean {
         val prog = _activeProgress.value ?: return false
-        onDismissNotification?.invoke(prog.key)
+        // Dismiss card only, without cancelling actual system notification
         _activeProgress.value = null
         if (_isExpanded.value && (_expandedPriority.value == IslandPriority.PROGRESS || !isOccupied)) {
             if (!isOccupied) {
@@ -355,6 +424,10 @@ object IslandStateManager {
     }
 
     fun expand(priority: IslandPriority? = null) {
+        val resolved = priority ?: currentPriority
+        if (resolved == IslandPriority.POP_NOTIFICATION) {
+            autoDismissNotificationJob?.cancel()
+        }
         _expandedPriority.value = priority
         _isExpanded.value = true
     }

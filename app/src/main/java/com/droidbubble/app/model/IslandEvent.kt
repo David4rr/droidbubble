@@ -14,7 +14,9 @@ data class MediaInfo(
     val durationMs: Long = 0L,
     val positionMs: Long = 0L,
     val playbackSpeed: Float = 1f,
-    val lastPositionUpdateTimeMs: Long = 0L
+    val lastPositionUpdateTimeMs: Long = 0L,
+    val canLike: Boolean = false,
+    val isLiked: Boolean = false
 ) {
     fun computeCurrentPosition(nowMs: Long = runCatching { android.os.SystemClock.elapsedRealtime() }.getOrDefault(0L)): Long {
         var pos = positionMs
@@ -70,5 +72,9 @@ enum class IslandPriority {
     POP_NOTIFICATION,
     MEDIA,
     FLASHLIGHT,
+    FPS,
+    WEATHER,
+    NETWORK_SPEED,
     IDLE
 }
+

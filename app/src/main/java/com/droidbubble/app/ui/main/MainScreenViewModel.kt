@@ -96,9 +96,20 @@ class MainScreenViewModel(private val repository: SettingsRepository) : ViewMode
             if (apkFile != null) {
                 com.droidbubble.app.util.UpdateManager.installApk(context, apkFile)
                 _showUpdateSheet.value = false
-                _updateState.value = UpdateState.Available(release)
+                _updateState.value = UpdateState.UpToDate
             } else {
                 _updateState.value = UpdateState.Error("Failed to download update APK")
+            }
+        }
+    }
+
+    fun refreshUpdateStateOnResume(context: Context) {
+        val current = com.droidbubble.app.util.UpdateManager.getCurrentVersion(context)
+        val state = _updateState.value
+        if (state is UpdateState.Available) {
+            if (!com.droidbubble.app.util.UpdateManager.isNewerVersion(state.release.version, current)) {
+                _updateState.value = UpdateState.UpToDate
+                _showUpdateSheet.value = false
             }
         }
     }

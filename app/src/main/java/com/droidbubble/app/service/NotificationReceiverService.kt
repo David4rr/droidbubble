@@ -52,6 +52,7 @@ class NotificationReceiverService : NotificationListenerService() {
     private var mediaSessionManager: MediaSessionManager? = null
     private var activeMediaController: MediaController? = null
     private val controllerCallbacks = mutableMapOf<MediaController, MediaController.Callback>()
+    private val userLikedTracks = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     private val sessionsChangedListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
         refreshMedia()
@@ -92,6 +93,72 @@ class NotificationReceiverService : NotificationListenerService() {
             activeMediaController?.transportControls?.skipToPrevious()
         }
 
+        IslandStateManager.onToggleLike = {
+            val controller = activeMediaController
+            val notif = activeNotifications?.firstOrNull { it.packageName == controller?.packageName }
+            var handled = false
+
+            // 1. Try CustomActions on playbackState
+            val customActions = controller?.playbackState?.customActions
+            val likeAction = customActions?.firstOrNull { ca ->
+                val a = ca.action.lowercase()
+                val n = ca.name?.toString()?.lowercase() ?: ""
+                a.contains("like") || a.contains("favorite") || a.contains("thumb") ||
+                n.contains("like") || n.contains("favorite") || n.contains("thumb")
+            }
+            if (likeAction != null && controller != null) {
+                try {
+                    controller.transportControls.sendCustomAction(likeAction.action, likeAction.extras)
+                    handled = true
+                } catch (e: Exception) {
+                    Log.e("NotificationReceiver", "Error sending custom action like", e)
+                }
+            }
+
+            // 2. Try Notification Actions
+            if (!handled && notif?.notification?.actions != null) {
+                val notifLikeAction = notif.notification.actions.firstOrNull { action ->
+                    val title = action.title?.toString()?.lowercase() ?: ""
+                    title.contains("like") || title.contains("favorite") || title.contains("thumb")
+                }
+                if (notifLikeAction?.actionIntent != null) {
+                    try {
+                        notifLikeAction.actionIntent.send()
+                        handled = true
+                    } catch (e: Exception) {
+                        Log.e("NotificationReceiver", "Error sending notif like action", e)
+                    }
+                }
+            }
+
+            // 3. Try TransportControls.setRating
+            if (!handled && controller != null) {
+                val currentMedia = IslandStateManager.activeMedia.value
+                val newLiked = !(currentMedia?.isLiked ?: false)
+                try {
+                    val rating = android.media.Rating.newHeartRating(newLiked)
+                    controller.transportControls.setRating(rating)
+                    handled = true
+                } catch (e: Exception) {
+                    try {
+                        val thumb = android.media.Rating.newThumbRating(newLiked)
+                        controller.transportControls.setRating(thumb)
+                        handled = true
+                    } catch (e2: Exception) {
+                        Log.e("NotificationReceiver", "Error setting rating", e2)
+                    }
+                }
+            }
+
+            val current = IslandStateManager.activeMedia.value
+            if (current != null) {
+                val newLiked = !current.isLiked
+                val trackKey = "${current.packageName}::${current.title}"
+                userLikedTracks[trackKey] = newLiked
+                IslandStateManager.updateMedia(current.copy(isLiked = newLiked))
+            }
+        }
+
         IslandStateManager.onSeekTo = { pos ->
             try {
                 activeMediaController?.transportControls?.seekTo(pos)
@@ -110,7 +177,7 @@ class NotificationReceiverService : NotificationListenerService() {
         }
 
         IslandStateManager.onDismissNotification = { key ->
-            runCatching { cancelNotification(key) }
+            // Intentionally no-op: dismissing only dismisses the island card, not the system notification itself
         }
 
         IslandStateManager.onSendReply = { key, replyText ->
@@ -426,6 +493,52 @@ class NotificationReceiverService : NotificationListenerService() {
             android.os.SystemClock.elapsedRealtime()
         }
 
+        // Determine like capability
+        val actions = playbackState?.actions ?: 0L
+        val supportsRating = (actions and PlaybackState.ACTION_SET_RATING) != 0L
+        val hasCustomLike = playbackState?.customActions?.any { ca ->
+            val a = ca.action.lowercase()
+            val n = ca.name?.toString()?.lowercase() ?: ""
+            a.contains("like") || a.contains("favorite") || a.contains("thumb") ||
+            n.contains("like") || n.contains("favorite") || n.contains("thumb")
+        } ?: false
+        val hasNotifLike = notif?.notification?.actions?.any { action ->
+            val t = action.title?.toString()?.lowercase() ?: ""
+            t.contains("like") || t.contains("favorite") || t.contains("thumb")
+        } ?: false
+
+        val isKnownMusicApp = controller.packageName in setOf(
+            "com.google.android.apps.youtube.music",
+            "com.spotify.music",
+            "com.soundcloud.android",
+            "com.apple.android.music",
+            "com.amazon.mp3",
+            "deezer.android.app",
+            "com.aspiro.tidal"
+        )
+
+        val canLike = supportsRating || hasCustomLike || hasNotifLike || isKnownMusicApp
+
+        val trackKey = "${controller.packageName}::$title"
+        val userExplicitLike = userLikedTracks[trackKey]
+
+        val userRating = metadata?.getRating(MediaMetadata.METADATA_KEY_USER_RATING)
+        val isLikedFromRating = if (userRating != null && userRating.isRated) {
+            userRating.hasHeart() || userRating.isThumbUp
+        } else false
+
+        val isLikedFromAction = playbackState?.customActions?.any { ca ->
+            val a = ca.action.lowercase()
+            val n = ca.name?.toString()?.lowercase() ?: ""
+            (a.contains("unlike") || n.contains("unlike") || a.contains("remove_like") || n.contains("remove_like") || a.contains("remove_favorite")) &&
+            !a.contains("like /") && !n.contains("like /")
+        } ?: notif?.notification?.actions?.any { action ->
+            val t = action.title?.toString()?.lowercase() ?: ""
+            (t.contains("unlike") || t.contains("remove like") || t.contains("remove from favorites")) && !t.contains("like /")
+        } ?: false
+
+        val isLiked = userExplicitLike ?: (isLikedFromRating || isLikedFromAction)
+
         IslandStateManager.updateMedia(
             MediaInfo(
                 packageName = controller.packageName,
@@ -438,7 +551,9 @@ class NotificationReceiverService : NotificationListenerService() {
                 durationMs = duration,
                 positionMs = position,
                 playbackSpeed = speed,
-                lastPositionUpdateTimeMs = lastUpdate
+                lastPositionUpdateTimeMs = lastUpdate,
+                canLike = canLike,
+                isLiked = isLiked
             )
         )
     }
@@ -769,10 +884,15 @@ class NotificationReceiverService : NotificationListenerService() {
         return getAppIconBitmap(packageName)
     }
 
+    private val appIconCache = android.util.LruCache<String, Bitmap>(30)
+
     private fun getAppIconBitmap(packageName: String): Bitmap? {
+        appIconCache.get(packageName)?.let { return it }
         return try {
             val drawable = packageManager.getApplicationIcon(packageName)
-            drawableToBitmap(drawable)
+            val bitmap = drawableToBitmap(drawable)
+            appIconCache.put(packageName, bitmap)
+            bitmap
         } catch (e: Exception) {
             null
         }
