@@ -31,6 +31,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.Menu
 import android.view.HapticFeedbackConstants
@@ -670,7 +673,7 @@ fun MainScreen(
             }
 
             item {
-                val reorderableKeys = remember(settings.featurePriorities) {
+                val reorderableKeys = remember {
                     val valid = listOf("MEDIA", "NOTIFICATION", "PROGRESS", "RECORDING")
                     val list = settings.featurePriorities.filter { it in valid }.toMutableList()
                     for (v in valid) {
@@ -679,7 +682,40 @@ fun MainScreen(
                     list.toMutableStateList()
                 }
                 var draggingKey by remember { mutableStateOf<String?>(null) }
+                var dragStartIndex by remember { mutableStateOf(0) }
                 var dragOffset by remember { mutableStateOf(0f) }
+                var itemHeightPx by remember { mutableStateOf(0f) }
+
+                LaunchedEffect(settings.featurePriorities) {
+                    if (draggingKey == null) {
+                        val valid = listOf("MEDIA", "NOTIFICATION", "PROGRESS", "RECORDING")
+                        val list = settings.featurePriorities.filter { it in valid }.toMutableList()
+                        for (v in valid) {
+                            if (v !in list) list.add(v)
+                        }
+                        if (reorderableKeys.toList() != list) {
+                            reorderableKeys.clear()
+                            reorderableKeys.addAll(list)
+                        }
+                    }
+                }
+
+                val density = LocalDensity.current
+                val cardGapPx = with(density) { 4.dp.toPx() }
+                val effectiveCardHeight = if (itemHeightPx > 0f) itemHeightPx else with(density) { 62.dp.toPx() }
+                val targetIndex = if (draggingKey != null) {
+                    (dragStartIndex + (dragOffset / effectiveCardHeight).roundToInt()).coerceIn(0, reorderableKeys.size - 1)
+                } else {
+                    dragStartIndex
+                }
+
+                var lastTargetIndex by remember { mutableStateOf(-1) }
+                LaunchedEffect(targetIndex, draggingKey) {
+                    if (draggingKey != null && targetIndex != lastTargetIndex && lastTargetIndex != -1) {
+                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    }
+                    lastTargetIndex = targetIndex
+                }
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -690,6 +726,19 @@ fun MainScreen(
                             val currentKey = featureKey
                             val isBeingDragged = draggingKey == currentKey
                             val zIdx = if (isBeingDragged) 10f else 1f
+
+                            val shiftY = when {
+                                draggingKey == null || isBeingDragged -> 0f
+                                targetIndex > dragStartIndex && index in (dragStartIndex + 1)..targetIndex -> -effectiveCardHeight
+                                targetIndex < dragStartIndex && index in targetIndex until dragStartIndex -> effectiveCardHeight
+                                else -> 0f
+                            }
+                            val animatedShiftY by animateFloatAsState(
+                                targetValue = shiftY,
+                                animationSpec = spring(stiffness = 600f, dampingRatio = 0.82f),
+                                label = "activity_reorder_shift"
+                            )
+
                             val itemPosition = when {
                                 index == 0 -> GroupPosition.TOP
                                 index == reorderableKeys.size - 1 -> GroupPosition.BOTTOM
@@ -720,24 +769,27 @@ fun MainScreen(
                                 else -> Icons.Default.Apps
                             }
 
-                            val cardModifier = if (isBeingDragged) {
-                                Modifier
-                                    .fillMaxWidth()
-                                    .zIndex(zIdx)
-                                    .graphicsLayer {
+                            val cardModifier = Modifier
+                                .fillMaxWidth()
+                                .zIndex(zIdx)
+                                .onGloballyPositioned { coords ->
+                                    if (!isBeingDragged && itemHeightPx == 0f) {
+                                        itemHeightPx = coords.size.height.toFloat() + cardGapPx
+                                    }
+                                }
+                                .graphicsLayer {
+                                    if (isBeingDragged) {
                                         translationY = dragOffset
                                         scaleX = 1.02f
                                         scaleY = 1.02f
                                         shadowElevation = 14.dp.toPx()
+                                    } else {
+                                        translationY = animatedShiftY
                                     }
-                            } else {
-                                Modifier
-                                    .fillMaxWidth()
-                                    .zIndex(zIdx)
-                            }
+                                }
 
                             SettingsCardItem(
-                                position = itemPosition,
+                                position = if (isBeingDragged) GroupPosition.SINGLE else itemPosition,
                                 modifier = cardModifier,
                                 isActive = isFeatureChecked
                             ) {
@@ -756,12 +808,22 @@ fun MainScreen(
                                                             onDragStart = {
                                                                 isDraggingIslandActivity = true
                                                                 draggingKey = currentKey
+                                                                dragStartIndex = reorderableKeys.indexOf(currentKey)
                                                                 dragOffset = 0f
                                                                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                                             },
                                                             onDragEnd = {
                                                                 if (draggingKey != null) {
-                                                                    viewModel.updateSettings { it.copy(featurePriorities = reorderableKeys.toList()) }
+                                                                    val start = dragStartIndex
+                                                                    val target = targetIndex
+                                                                    if (start in reorderableKeys.indices && target in reorderableKeys.indices && start != target) {
+                                                                        val list = reorderableKeys.toMutableList()
+                                                                        val item = list.removeAt(start)
+                                                                        list.add(target, item)
+                                                                        reorderableKeys.clear()
+                                                                        reorderableKeys.addAll(list)
+                                                                        viewModel.updateSettings { it.copy(featurePriorities = list) }
+                                                                    }
                                                                     view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                                                                 }
                                                                 draggingKey = null
@@ -776,21 +838,6 @@ fun MainScreen(
                                                             onVerticalDrag = { change, dragAmount ->
                                                                 change.consume()
                                                                 dragOffset += dragAmount
-                                                                val curIdx = reorderableKeys.indexOf(draggingKey)
-                                                                if (curIdx != -1) {
-                                                                    val cardHeight = 64.dp.toPx()
-                                                                    if (dragOffset > cardHeight && curIdx < reorderableKeys.size - 1) {
-                                                                        val item = reorderableKeys.removeAt(curIdx)
-                                                                        reorderableKeys.add(curIdx + 1, item)
-                                                                        dragOffset -= cardHeight
-                                                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                                                    } else if (dragOffset < -cardHeight && curIdx > 0) {
-                                                                        val item = reorderableKeys.removeAt(curIdx)
-                                                                        reorderableKeys.add(curIdx - 1, item)
-                                                                        dragOffset += cardHeight
-                                                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                                                    }
-                                                                }
                                                             }
                                                         )
                                                     }
@@ -827,30 +874,6 @@ fun MainScreen(
                                         )
                                     }
                                 )
-                            }
-
-                            // If notifications is enabled and this is the notification item, show Per-App Filter button
-                            if (currentKey == "NOTIFICATION" && settings.showNotifications) {
-                                SettingsCardItem(position = GroupPosition.MIDDLE) {
-                                    ListItem(
-                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                        headlineContent = { Text("Per-App Notification Filter", fontWeight = FontWeight.SemiBold) },
-                                        leadingContent = {
-                                            Icon(Icons.Default.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        },
-                                        trailingContent = {
-                                            OutlinedButton(
-                                                onClick = {
-                                                    viewModel.loadInstalledApps(context)
-                                                    showAppFilterSheet = true
-                                                },
-                                                shape = RoundedCornerShape(12.dp)
-                                            ) {
-                                                Text("Filter Apps")
-                                            }
-                                        }
-                                    )
-                                }
                             }
                         }
                     }
@@ -1796,10 +1819,6 @@ fun AppearancePage(
             }
 
             item {
-                AnimationCurveEditor(settings = settings, onUpdateSettings = onUpdateSettings)
-            }
-
-            item {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1895,6 +1914,10 @@ fun AppearancePage(
                     }
                 }
             }
+
+            item {
+                AnimationCurveEditor(settings = settings, onUpdateSettings = onUpdateSettings)
+            }
         }
     }
 }
@@ -1985,8 +2008,6 @@ fun AccessibilityPage(
 }
 
 
-private data class CurveTarget(val label: String, val hint: String)
-
 private fun springStep(damping: Float, stiffness: Float, t: Float): Float {
     val w = Math.sqrt(stiffness.toDouble())
     val z = damping.toDouble()
@@ -2003,11 +2024,7 @@ fun AnimationCurveEditor(
     settings: IslandSettings,
     onUpdateSettings: ((IslandSettings) -> IslandSettings) -> Unit
 ) {
-    val targets = listOf(
-        CurveTarget("Expand", "Island opening & closing"),
-        CurveTarget("Appear", "Charging, ring, Bluetooth alerts"),
-        CurveTarget("Split", "Island splitting into two")
-    )
+    val targets = listOf("Expand", "Appear", "Split")
     var selected by remember { mutableStateOf(0) }
     val defaults = listOf(0.74f to 380f, 0.60f to 280f, 0.63f to 320f)
     val damping = when (selected) { 0 -> settings.expandDamping; 1 -> settings.appearDamping; else -> settings.splitDamping }
@@ -2032,14 +2049,7 @@ fun AnimationCurveEditor(
             ) {
                 Icon(Icons.Default.Animation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Animation Curves", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        targets[selected].hint,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text("Animation Curves", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 TextButton(onClick = { setCurve(defaults[selected].first, defaults[selected].second) }, enabled = !isDefault) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
@@ -2047,20 +2057,56 @@ fun AnimationCurveEditor(
                 }
             }
             Spacer(Modifier.height(10.dp))
+
+            // Expand / Appear / Split segmented buttons matching screen record & live progress cards
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                targets.forEachIndexed { i, tgt ->
-                    FilterChip(
-                        selected = selected == i,
+                targets.forEachIndexed { i, label ->
+                    val isSelected = selected == i
+                    val shape = when (i) {
+                        0 -> RoundedCornerShape(
+                            topStart = 14.dp,
+                            bottomStart = 14.dp,
+                            topEnd = 4.dp,
+                            bottomEnd = 4.dp
+                        )
+                        targets.size - 1 -> RoundedCornerShape(
+                            topStart = 4.dp,
+                            bottomStart = 4.dp,
+                            topEnd = 14.dp,
+                            bottomEnd = 14.dp
+                        )
+                        else -> RoundedCornerShape(4.dp)
+                    }
+
+                    FilledTonalButton(
                         onClick = { selected = i },
-                        label = { Text(tgt.label) },
-                        shape = RoundedCornerShape(12.dp)
-                    )
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(38.dp),
+                        shape = shape,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
+                            contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 13.5.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
 
             val lineColor = MaterialTheme.colorScheme.primary
             val guideColor = MaterialTheme.colorScheme.outlineVariant
