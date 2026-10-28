@@ -38,5 +38,11 @@ data class IslandSettings(
     val showNetworkSpeed: Boolean = false,
     val autoDismissNotifications: Boolean = false,
     val blurredAlbumArtBackground: Boolean = false,
+    val expandDamping: Float = 0.74f,
+    val expandStiffness: Float = 380f,
+    val appearDamping: Float = 0.6f,
+    val appearStiffness: Float = 280f,
+    val splitDamping: Float = 0.63f,
+    val splitStiffness: Float = 320f,
     val featurePriorities: List<String> = DEFAULT_FEATURE_PRIORITIES
 )

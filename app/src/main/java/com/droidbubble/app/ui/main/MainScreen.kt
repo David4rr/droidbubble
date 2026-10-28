@@ -1796,6 +1796,10 @@ fun AppearancePage(
             }
 
             item {
+                AnimationCurveEditor(settings = settings, onUpdateSettings = onUpdateSettings)
+            }
+
+            item {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1977,5 +1981,171 @@ fun AccessibilityPage(
                 }
             }
         }
+    }
+}
+
+
+private data class CurveTarget(val label: String, val hint: String)
+
+private fun springStep(damping: Float, stiffness: Float, t: Float): Float {
+    val w = Math.sqrt(stiffness.toDouble())
+    val z = damping.toDouble()
+    return if (z < 1.0) {
+        val wd = w * Math.sqrt(1.0 - z * z)
+        (1.0 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t))).toFloat()
+    } else {
+        (1.0 - Math.exp(-w * t) * (1.0 + w * t)).toFloat()
+    }
+}
+
+@Composable
+fun AnimationCurveEditor(
+    settings: IslandSettings,
+    onUpdateSettings: ((IslandSettings) -> IslandSettings) -> Unit
+) {
+    val targets = listOf(
+        CurveTarget("Expand", "Island opening & closing"),
+        CurveTarget("Appear", "Charging, ring, Bluetooth alerts"),
+        CurveTarget("Split", "Island splitting into two")
+    )
+    var selected by remember { mutableStateOf(0) }
+    val defaults = listOf(0.74f to 380f, 0.60f to 280f, 0.63f to 320f)
+    val damping = when (selected) { 0 -> settings.expandDamping; 1 -> settings.appearDamping; else -> settings.splitDamping }
+    val stiffness = when (selected) { 0 -> settings.expandStiffness; 1 -> settings.appearStiffness; else -> settings.splitStiffness }
+    val isDefault = damping == defaults[selected].first && stiffness == defaults[selected].second
+
+    fun setCurve(d: Float, k: Float) {
+        onUpdateSettings {
+            when (selected) {
+                0 -> it.copy(expandDamping = d, expandStiffness = k)
+                1 -> it.copy(appearDamping = d, appearStiffness = k)
+                else -> it.copy(splitDamping = d, splitStiffness = k)
+            }
+        }
+    }
+
+    SettingsCardItem(position = GroupPosition.SINGLE) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Animation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Animation Curves", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        targets[selected].hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { setCurve(defaults[selected].first, defaults[selected].second) }, enabled = !isDefault) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Reset")
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                targets.forEachIndexed { i, tgt ->
+                    FilterChip(
+                        selected = selected == i,
+                        onClick = { selected = i },
+                        label = { Text(tgt.label) },
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
+            val lineColor = MaterialTheme.colorScheme.primary
+            val guideColor = MaterialTheme.colorScheme.outlineVariant
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .fillMaxWidth()
+                    .height(120.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f))
+            ) {
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    val padX = 14.dp.toPx()
+                    val padY = 22.dp.toPx()
+                    val w = size.width - padX * 2
+                    val h = size.height - padY * 2
+                    val maxV = 1.5f
+                    val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f))
+                    val targetY = padY + h * (1f - 1f / maxV)
+                    drawLine(guideColor, androidx.compose.ui.geometry.Offset(padX, targetY), androidx.compose.ui.geometry.Offset(padX + w, targetY), strokeWidth = 1.5f, pathEffect = dash)
+                    val baseY = padY + h
+                    drawLine(guideColor, androidx.compose.ui.geometry.Offset(padX, baseY), androidx.compose.ui.geometry.Offset(padX + w, baseY), strokeWidth = 1.5f)
+                    val path = androidx.compose.ui.graphics.Path()
+                    val n = 80
+                    for (i in 0..n) {
+                        val tt = i / n.toFloat()
+                        val v = springStep(damping, stiffness, tt * 1.0f).coerceIn(0f, maxV)
+                        val x = padX + w * tt
+                        val y = padY + h * (1f - v / maxV)
+                        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    drawPath(
+                        path, lineColor,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = 3.dp.toPx(),
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round
+                        )
+                    )
+                }
+            }
+
+            val bounce = ((1f - damping) / 0.7f).coerceIn(0f, 1f)
+            SliderSettingItemPct(
+                label = "Bounce",
+                valueText = "${(bounce * 100).toInt()}%",
+                value = bounce,
+                valueRange = 0f..1f,
+                onValueChange = { b -> setCurve((1f - 0.7f * b), stiffness) }
+            )
+            SliderSettingItemPct(
+                label = "Snap",
+                valueText = "${stiffness.toInt()}",
+                value = stiffness,
+                valueRange = 150f..700f,
+                onValueChange = { k -> setCurve(damping, k.roundToInt().toFloat()) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SliderSettingItemPct(
+    label: String,
+    valueText: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Text(valueText, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+        Slider(value = value, onValueChange = onValueChange, valueRange = valueRange, modifier = Modifier.height(28.dp))
     }
 }

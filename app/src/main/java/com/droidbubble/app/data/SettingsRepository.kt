@@ -50,6 +50,12 @@ class SettingsRepository(private val context: Context) {
         val SHOW_NETWORK_SPEED = booleanPreferencesKey("show_network_speed")
         val AUTO_DISMISS_NOTIFICATIONS = booleanPreferencesKey("auto_dismiss_notifications")
         val BLURRED_ALBUM_ART_BACKGROUND = booleanPreferencesKey("blurred_album_art_background")
+        val EXPAND_DAMPING = floatPreferencesKey("expand_damping")
+        val EXPAND_STIFFNESS = floatPreferencesKey("expand_stiffness")
+        val APPEAR_DAMPING = floatPreferencesKey("appear_damping")
+        val APPEAR_STIFFNESS = floatPreferencesKey("appear_stiffness")
+        val SPLIT_DAMPING = floatPreferencesKey("split_damping")
+        val SPLIT_STIFFNESS = floatPreferencesKey("split_stiffness")
         val FEATURE_PRIORITIES = stringPreferencesKey("feature_priorities")
     }
 
@@ -93,6 +99,12 @@ class SettingsRepository(private val context: Context) {
             showNetworkSpeed = preferences[PreferencesKeys.SHOW_NETWORK_SPEED] ?: false,
             autoDismissNotifications = preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] ?: false,
             blurredAlbumArtBackground = preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] ?: false,
+            expandDamping = preferences[PreferencesKeys.EXPAND_DAMPING] ?: 0.74f,
+            expandStiffness = preferences[PreferencesKeys.EXPAND_STIFFNESS] ?: 380f,
+            appearDamping = preferences[PreferencesKeys.APPEAR_DAMPING] ?: 0.6f,
+            appearStiffness = preferences[PreferencesKeys.APPEAR_STIFFNESS] ?: 280f,
+            splitDamping = preferences[PreferencesKeys.SPLIT_DAMPING] ?: 0.63f,
+            splitStiffness = preferences[PreferencesKeys.SPLIT_STIFFNESS] ?: 320f,
             featurePriorities = preferences[PreferencesKeys.FEATURE_PRIORITIES]
                 ?.split(",")
                 ?.map { it.trim() }
@@ -145,6 +157,12 @@ class SettingsRepository(private val context: Context) {
                 showNetworkSpeed = preferences[PreferencesKeys.SHOW_NETWORK_SPEED] ?: false,
                 autoDismissNotifications = preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] ?: false,
             blurredAlbumArtBackground = preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] ?: false,
+            expandDamping = preferences[PreferencesKeys.EXPAND_DAMPING] ?: 0.74f,
+            expandStiffness = preferences[PreferencesKeys.EXPAND_STIFFNESS] ?: 380f,
+            appearDamping = preferences[PreferencesKeys.APPEAR_DAMPING] ?: 0.6f,
+            appearStiffness = preferences[PreferencesKeys.APPEAR_STIFFNESS] ?: 280f,
+            splitDamping = preferences[PreferencesKeys.SPLIT_DAMPING] ?: 0.63f,
+            splitStiffness = preferences[PreferencesKeys.SPLIT_STIFFNESS] ?: 320f,
                 featurePriorities = preferences[PreferencesKeys.FEATURE_PRIORITIES]
                     ?.split(",")
                     ?.map { it.trim() }
@@ -188,6 +206,12 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_NETWORK_SPEED] = newSettings.showNetworkSpeed
             preferences[PreferencesKeys.AUTO_DISMISS_NOTIFICATIONS] = newSettings.autoDismissNotifications
             preferences[PreferencesKeys.BLURRED_ALBUM_ART_BACKGROUND] = newSettings.blurredAlbumArtBackground
+            preferences[PreferencesKeys.EXPAND_DAMPING] = newSettings.expandDamping
+            preferences[PreferencesKeys.EXPAND_STIFFNESS] = newSettings.expandStiffness
+            preferences[PreferencesKeys.APPEAR_DAMPING] = newSettings.appearDamping
+            preferences[PreferencesKeys.APPEAR_STIFFNESS] = newSettings.appearStiffness
+            preferences[PreferencesKeys.SPLIT_DAMPING] = newSettings.splitDamping
+            preferences[PreferencesKeys.SPLIT_STIFFNESS] = newSettings.splitStiffness
             preferences[PreferencesKeys.FEATURE_PRIORITIES] = newSettings.featurePriorities.joinToString(",")
         }
     }

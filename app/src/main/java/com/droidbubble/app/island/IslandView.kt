@@ -493,12 +493,12 @@ fun IslandOverlayRoot(
     // Animation Specs (dynamically scaled by settings.animationSpeed):
     val sizeAnimSpecDp = when {
         isCharging || isUnlock || isBluetooth || isRingerMode -> spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.60f,
-            stiffness = 280f * speedSq
+            dampingRatio = settings.appearDamping,
+            stiffness = settings.appearStiffness * speedSq
         )
         isExpanded -> spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.74f,
-            stiffness = 380f * speedSq
+            dampingRatio = settings.expandDamping,
+            stiffness = settings.expandStiffness * speedSq
         )
         else -> tween<androidx.compose.ui.unit.Dp>(
             durationMillis = (190 / speed).roundToInt(),
@@ -508,12 +508,12 @@ fun IslandOverlayRoot(
 
     val sizeAnimSpecFloat = when {
         isCharging || isUnlock || isBluetooth || isRingerMode -> spring<Float>(
-            dampingRatio = 0.60f,
-            stiffness = 280f * speedSq
+            dampingRatio = settings.appearDamping,
+            stiffness = settings.appearStiffness * speedSq
         )
         isExpanded -> spring<Float>(
-            dampingRatio = 0.74f,
-            stiffness = 380f * speedSq
+            dampingRatio = settings.expandDamping,
+            stiffness = settings.expandStiffness * speedSq
         )
         else -> tween<Float>(
             durationMillis = (190 / speed).roundToInt(),
@@ -523,8 +523,8 @@ fun IslandOverlayRoot(
 
     val positionAnimSpecDp = if (isExpanded) {
         spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.74f,
-            stiffness = 380f * speedSq
+            dampingRatio = settings.expandDamping,
+            stiffness = settings.expandStiffness * speedSq
         )
     } else {
         tween<androidx.compose.ui.unit.Dp>(
@@ -543,8 +543,8 @@ fun IslandOverlayRoot(
         )
     } else {
         spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.63f,
-            stiffness = 320f * speedSq
+            dampingRatio = settings.splitDamping,
+            stiffness = settings.splitStiffness * speedSq
         )
     }
 
@@ -865,8 +865,8 @@ fun IslandOverlayRoot(
 
     val bubbleOffsetAnimSpec = if (secondaryBubbleEmerged && shouldEmergeSecondary) {
         spring<Dp>(
-            dampingRatio = 0.63f, // Slight bounce! Gently overshoots by ~3-4dp and bounces back
-            stiffness = 320f * speedSq
+            dampingRatio = settings.splitDamping, // Slight bounce! Gently overshoots by ~3-4dp and bounces back
+            stiffness = settings.splitStiffness * speedSq
         )
     } else {
         spring<Dp>(
