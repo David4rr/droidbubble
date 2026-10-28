@@ -127,11 +127,13 @@ class PersistentWidgetTelemetryManager(private val context: Context) {
 
     private fun resolveDisplayHz() {
         runCatching {
-            val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
             val rate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                context.display?.refreshRate ?: 60f
+                val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+                val display = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                display?.refreshRate ?: 60f
             } else {
                 @Suppress("DEPRECATION")
+                val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
                 wm?.defaultDisplay?.refreshRate ?: 60f
             }
             maxDisplayHz = rate.roundToInt().coerceIn(60, 240)

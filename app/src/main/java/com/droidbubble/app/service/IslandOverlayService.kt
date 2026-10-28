@@ -522,6 +522,12 @@ class IslandOverlayService : Service() {
             field.setInt(params, current or 0x00000040)
         } catch (_: Exception) {}
     }
+    private fun getSafeDisplay(): android.view.Display? {
+        return runCatching {
+            val dm = getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+            dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        }.getOrNull()
+    }
 
 
 
@@ -606,19 +612,21 @@ class IslandOverlayService : Service() {
             windowAnimations = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                val display = (aService ?: this@IslandOverlayService).display
-                val maxMode = display?.supportedModes?.maxByOrNull { it.refreshRate }
-                if (maxMode != null) {
-                    preferredDisplayModeId = maxMode.modeId
+                runCatching {
+                    val display = getSafeDisplay()
+                    val maxMode = display?.supportedModes?.maxByOrNull { it.refreshRate }
+                    if (maxMode != null) {
+                        preferredDisplayModeId = maxMode.modeId
+                    }
+                    preferredRefreshRate = maxMode?.refreshRate ?: 120f
                 }
-                preferredRefreshRate = maxMode?.refreshRate ?: 120f
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
         }
         disableMoveAnimation(layoutParams!!)
 
-        val view = ComposeView(aService ?: this).apply {
+        val view = ComposeView(this@IslandOverlayService).apply {
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(lifecycleOwner)
@@ -733,12 +741,14 @@ class IslandOverlayService : Service() {
         params.gravity = gravity
         params.flags = targetFlags
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val display = (IslandAccessibilityService.instance ?: this).display
-            val maxMode = display?.supportedModes?.maxByOrNull { it.refreshRate }
-            if (maxMode != null) {
-                params.preferredDisplayModeId = maxMode.modeId
+            runCatching {
+                val display = getSafeDisplay()
+                val maxMode = display?.supportedModes?.maxByOrNull { it.refreshRate }
+                if (maxMode != null) {
+                    params.preferredDisplayModeId = maxMode.modeId
+                }
+                params.preferredRefreshRate = maxMode?.refreshRate ?: 120f
             }
-            params.preferredRefreshRate = maxMode?.refreshRate ?: 120f
         }
         disableMoveAnimation(params)
         runCatching { windowManager?.updateViewLayout(view, params) }
