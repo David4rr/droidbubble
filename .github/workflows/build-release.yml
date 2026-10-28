@@ -1,0 +1,65 @@
+name: Build Release APK
+
+on:
+  push:
+    branches: [ master, main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Determine Release Tag
+        id: vars
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            TAG_NAME="v1.2.0-moto"
+          fi
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag_name }}
+          name: "Droidbubble ${{ steps.vars.outputs.tag_name }} (Moto G45 5G Optimized)"
+          body: |
+            ### Droidbubble Release (Moto G45 5G Optimized)
+            
+            **Customizations included:**
+            - **4-Bar Apple-Spec Dynamic Island Music Spectrum**: Organic spring-physics multi-harmonic equalizer with smooth pause collapse to resting dots.
+            - **120 Hz Display Pinning**: Native 120 FPS rendering on Motorola Moto G45 5G with hardware acceleration.
+            - **Music Expansion Glitch Fix**: Fixed involuntary collapse back to pill mode during pausing, scrubbing, and buffering.
+            - **Shizuku System Notifications Menu**: In-app 1-tap toggle to block default Android heads-up notification popups and hide status bar icons.
+            
+            Built with release optimization (`Droidbubble-release.apk`).
+          draft: false
+          prerelease: false
+          files: app/build/outputs/apk/release/Droidbubble-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

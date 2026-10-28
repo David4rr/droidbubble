@@ -154,7 +154,7 @@ object IslandStateManager {
     val isMediaActive: Boolean
         get() {
             val media = _activeMedia.value ?: return false
-            if (dismissMediaOnPause && !media.isPlaying) return false
+            if (dismissMediaOnPause && !media.isPlaying && !_isExpanded.value) return false
             // Keep active whenever a media session exists with a title so the island remains visible & expandable when paused!
             return media.title.isNotBlank()
         }
@@ -271,11 +271,8 @@ object IslandStateManager {
     }
 
     fun updateMedia(media: MediaInfo?) {
-        if (dismissMediaOnPause && media != null && !media.isPlaying) {
+        if (dismissMediaOnPause && media != null && !media.isPlaying && !_isExpanded.value) {
             _activeMedia.value = null
-            if (_isExpanded.value && (_expandedPriority.value == IslandPriority.MEDIA || !isOccupied)) {
-                collapse()
-            }
             return
         }
         if (media != null && media.packageName == dismissedMediaPackage) {
@@ -285,16 +282,10 @@ object IslandStateManager {
             } else {
                 // Still dismissed by user swipe
                 _activeMedia.value = null
-                if (_isExpanded.value && (_expandedPriority.value == IslandPriority.MEDIA || !isOccupied)) {
-                    collapse()
-                }
                 return
             }
         }
         _activeMedia.value = media
-        if (media == null && _isExpanded.value && (_expandedPriority.value == IslandPriority.MEDIA || !isOccupied)) {
-            collapse()
-        }
         if (media?.isPlaying == true) {
             lastMediaPlayingTime = System.currentTimeMillis()
         }

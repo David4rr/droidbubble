@@ -549,7 +549,8 @@ class IslandOverlayService : Service() {
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
 
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val allowedInOrientation = currentSettings.isEnabled && (currentSettings.showInLandscape || !isLandscape)
@@ -605,6 +606,12 @@ class IslandOverlayService : Service() {
             windowAnimations = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                val display = (aService ?: this@IslandOverlayService).display
+                val maxMode = display?.supportedModes?.maxByOrNull { it.refreshRate }
+                if (maxMode != null) {
+                    preferredDisplayModeId = maxMode.modeId
+                }
+                preferredRefreshRate = maxMode?.refreshRate ?: 120f
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
@@ -709,12 +716,13 @@ class IslandOverlayService : Service() {
         gravity: Int,
         flags: Int
     ) {
+        val targetFlags = flags or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
         if (params.width == width &&
             params.height == height &&
             params.x == x &&
             params.y == y &&
             params.gravity == gravity &&
-            params.flags == flags
+            params.flags == targetFlags
         ) {
             return
         }
@@ -723,7 +731,15 @@ class IslandOverlayService : Service() {
         params.x = x
         params.y = y
         params.gravity = gravity
-        params.flags = flags
+        params.flags = targetFlags
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val display = (IslandAccessibilityService.instance ?: this).display
+            val maxMode = display?.supportedModes?.maxByOrNull { it.refreshRate }
+            if (maxMode != null) {
+                params.preferredDisplayModeId = maxMode.modeId
+            }
+            params.preferredRefreshRate = maxMode?.refreshRate ?: 120f
+        }
         disableMoveAnimation(params)
         runCatching { windowManager?.updateViewLayout(view, params) }
     }

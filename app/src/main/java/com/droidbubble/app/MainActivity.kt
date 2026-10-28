@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         viewModel.checkPermissions(this)
+        viewModel.checkShizukuStatus(this)
         if (PermissionHelper.isOverlayGranted(this)) {
             IslandOverlayService.start(this)
         }
@@ -69,6 +70,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.checkPermissions(this)
+        viewModel.checkShizukuStatus(this)
         if (PermissionHelper.isOverlayGranted(this)) {
             IslandOverlayService.start(this)
         }

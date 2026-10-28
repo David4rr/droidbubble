@@ -78,6 +78,55 @@ object ShizukuHelper {
             mainHandler.post { onResult(success) }
         }
     }
+    fun isHeadsUpNotificationsDisabled(context: Context): Boolean {
+        return try {
+            Settings.Global.getInt(context.contentResolver, "heads_up_notifications_enabled", 1) == 0
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun isStatusBarIconsHidden(context: Context): Boolean {
+        return try {
+            val blacklist = Settings.Secure.getString(context.contentResolver, "icon_blacklist")
+            !blacklist.isNullOrBlank()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun setHeadsUpNotificationsDisabled(context: Context, disabled: Boolean, onResult: ((Boolean) -> Unit)? = null) {
+        executor.execute {
+            var success = false
+            val value = if (disabled) 0 else 1
+
+            if (hasWriteSecureSettings(context)) {
+                try {
+                    Settings.Global.putInt(context.contentResolver, "heads_up_notifications_enabled", value)
+                    success = true
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Direct Settings write for heads_up failed", e)
+                }
+            }
+
+            if (isShizukuAvailable() && hasShizukuPermission()) {
+                val cmd = "settings put global heads_up_notifications_enabled $value"
+                val ok = runShellCommand(cmd)
+                if (ok) success = true
+            }
+
+            if (!success) {
+                try {
+                    val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "settings put global heads_up_notifications_enabled $value"))
+                    p.waitFor()
+                    success = p.exitValue() == 0
+                } catch (_: Throwable) {}
+            }
+
+            mainHandler.post { onResult?.invoke(success) }
+        }
+    }
+
 
     fun setSystemStatusBarIconsHidden(context: Context, hidden: Boolean, onResult: ((Boolean) -> Unit)? = null) {
         executor.execute {

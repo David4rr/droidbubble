@@ -44,6 +44,17 @@ class MainScreenViewModel(private val repository: SettingsRepository) : ViewMode
     private val _isLoadingApps = MutableStateFlow(false)
     val isLoadingApps: StateFlow<Boolean> = _isLoadingApps.asStateFlow()
 
+    private val _isHeadsUpDisabled = MutableStateFlow(false)
+    val isHeadsUpDisabled: StateFlow<Boolean> = _isHeadsUpDisabled.asStateFlow()
+
+    private val _isStatusBarHidden = MutableStateFlow(false)
+    val isStatusBarHidden: StateFlow<Boolean> = _isStatusBarHidden.asStateFlow()
+
+    private val _isShizukuAvailable = MutableStateFlow(false)
+    val isShizukuAvailable: StateFlow<Boolean> = _isShizukuAvailable.asStateFlow()
+
+    private val _hasShizukuPermission = MutableStateFlow(false)
+    val hasShizukuPermission: StateFlow<Boolean> = _hasShizukuPermission.asStateFlow()
     sealed interface UpdateState {
         data object Idle : UpdateState
         data object Checking : UpdateState
@@ -180,5 +191,28 @@ class MainScreenViewModel(private val repository: SettingsRepository) : ViewMode
                 } else app
             }
         }
+    }
+
+    fun checkShizukuStatus(context: Context) {
+        _isShizukuAvailable.value = com.droidbubble.app.util.ShizukuHelper.isShizukuAvailable()
+        _hasShizukuPermission.value = com.droidbubble.app.util.ShizukuHelper.hasShizukuPermission()
+        _isHeadsUpDisabled.value = com.droidbubble.app.util.ShizukuHelper.isHeadsUpNotificationsDisabled(context)
+        _isStatusBarHidden.value = com.droidbubble.app.util.ShizukuHelper.isStatusBarIconsHidden(context)
+    }
+
+    fun toggleBlockHeadsUp(context: Context, disableHeadsUp: Boolean) {
+        com.droidbubble.app.util.ShizukuHelper.setHeadsUpNotificationsDisabled(context, disableHeadsUp) {
+            _isHeadsUpDisabled.value = com.droidbubble.app.util.ShizukuHelper.isHeadsUpNotificationsDisabled(context)
+        }
+    }
+
+    fun toggleHideStatusBarIcons(context: Context, hide: Boolean) {
+        com.droidbubble.app.util.ShizukuHelper.setSystemStatusBarIconsHidden(context, hide) {
+            _isStatusBarHidden.value = com.droidbubble.app.util.ShizukuHelper.isStatusBarIconsHidden(context)
+        }
+    }
+
+    fun requestShizukuPermission() {
+        com.droidbubble.app.util.ShizukuHelper.requestShizukuPermission()
     }
 }

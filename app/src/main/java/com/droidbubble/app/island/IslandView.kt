@@ -394,7 +394,7 @@ fun IslandOverlayRoot(
     val isRecording = allowInOrientation && recording.isRecording && settings.showScreenRecording
     val isProgress = allowInOrientation && currentProgress != null && settings.showLiveProgress
     val isNotification = allowInOrientation && currentNotif != null && settings.showNotifications
-    val isMedia = allowInOrientation && currentMedia != null && (!settings.dismissMediaOnPause || currentMedia.isPlaying) && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
+    val isMedia = allowInOrientation && currentMedia != null && (!settings.dismissMediaOnPause || currentMedia.isPlaying || isExpanded) && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
     val isFlashlight = allowInOrientation && settings.showFlashlight && isFlashlightOn
     val isCharging = allowInOrientation && settings.showCharging && charging != null
     val isUnlock = allowInOrientation && isUnlocked && !isCharging
@@ -964,13 +964,7 @@ fun IslandOverlayRoot(
         }
     }
 
-    LaunchedEffect(isExpanded, isOccupied, primaryPriority) {
-        if (isExpanded) {
-            if (!isOccupied || primaryPriority == IslandPriority.IDLE) {
-                IslandStateManager.collapse()
-            }
-        }
-    }
+    // Retain expanded card without auto-collapsing during state transitions
 
     fun triggerHaptic() {
         if (settings.hapticsEnabled) {
@@ -2494,7 +2488,7 @@ fun CompactContent(
                     val displayArt = media?.albumArt ?: media?.appIcon
                     val compactAccent = remember(displayArt) { extractMediaAccentColor(displayArt) }
                     val compactEqTint = if (compactAccent != Color.Transparent) {
-                        lerp(Color(0xFFE5E5EA), compactAccent, 0.50f)
+                        lerp(Color(0xFFE5E5EA), compactAccent, 0.75f)
                     } else {
                         Color(0xFFE5E5EA)
                     }
@@ -2903,7 +2897,7 @@ fun ExpandedMediaView(media: MediaInfo?, onCollapse: () -> Unit, scale: Float = 
     }
 
     val eqTint = if (mediaAccentColor != Color.Transparent) {
-        lerp(Color(0xFFE5E5EA), mediaAccentColor, 0.50f)
+        lerp(Color(0xFFE5E5EA), mediaAccentColor, 0.75f)
     } else {
         Color(0xFFE5E5EA)
     }
@@ -3894,102 +3888,96 @@ fun PulsingRecordingDot(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun EqualizerVisualizer(isPlaying: Boolean, barColor: Color = Color(0xFFE5E5EA)) {
-    if (!isPlaying) {
-        // Zero CPU usage when paused: render static equalizer bars without triggering infinite frame recompositions
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.height(16.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height((16 * 0.3f).dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(barColor)
-            )
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height((16 * 0.5f).dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(barColor)
-            )
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height((16 * 0.2f).dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(barColor)
-            )
-        }
-        return
-    }
+fun EqualizerVisualizer(
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier,
+    barColor: Color = Color(0xFFE5E5EA)
+) {
+    // Smooth spring physics between active bouncing state (1f) and resting dots state (0f)
+    val playProgress by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "eq_play_spring"
+    )
 
-    val transition = rememberInfiniteTransition(label = "eq_bars")
+    val transition = rememberInfiniteTransition(label = "eq_harmonic_bars")
 
+    // Bar 1 (Sub-bass / Beat pulse): 480ms period, range 0.32f -> 0.88f
     val h1 by transition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 0.9f,
+        initialValue = 0.32f,
+        targetValue = 0.88f,
         animationSpec = infiniteRepeatable(
-            animation = tween(450, easing = FastOutSlowInEasing),
+            animation = tween(480, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "h1"
     )
+
+    // Bar 2 (Low-mid / Snare bounce): 340ms period, range 0.94f -> 0.22f
     val h2 by transition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 0.3f,
+        initialValue = 0.94f,
+        targetValue = 0.22f,
         animationSpec = infiniteRepeatable(
-            animation = tween(380, easing = FastOutSlowInEasing),
+            animation = tween(340, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "h2"
     )
+
+    // Bar 3 (High-mid / Melody flutter): 430ms period, range 0.38f -> 1.00f
     val h3 by transition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
+        initialValue = 0.38f,
+        targetValue = 1.00f,
         animationSpec = infiniteRepeatable(
-            animation = tween(520, easing = FastOutSlowInEasing),
+            animation = tween(430, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "h3"
     )
 
-    val currentH1 = if (isPlaying) h1 else 0.3f
-    val currentH2 = if (isPlaying) h2 else 0.5f
-    val currentH3 = if (isPlaying) h3 else 0.2f
+    // Bar 4 (Treble / Shimmer): 310ms period, range 0.72f -> 0.25f
+    val h4 by transition.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(310, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "h4"
+    )
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        modifier = Modifier.height(16.dp)
+    // 4 vertical capsule bars, matching Apple's Dynamic Island aspect ratio
+    // Bar width: 2.4dp, gap: 1.4dp. Total width: (2.4 * 4) + (1.4 * 3) = 13.8dp.
+    Canvas(
+        modifier = modifier.size(width = 14.dp, height = 15.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height((16 * currentH1).dp)
-                .clip(RoundedCornerShape(1.5.dp))
-                .background(barColor)
-        )
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height((16 * currentH2).dp)
-                .clip(RoundedCornerShape(1.5.dp))
-                .background(barColor)
-        )
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height((16 * currentH3).dp)
-                .clip(RoundedCornerShape(1.5.dp))
-                .background(barColor)
-        )
+        val barWidth = 2.4.dp.toPx()
+        val gap = 1.4.dp.toPx()
+        val cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2f, barWidth / 2f)
+        val totalHeight = size.height
+        val minHeight = barWidth // At rest (paused), collapses into a perfect circular dot
+
+        val activeHeights = floatArrayOf(h1, h2, h3, h4)
+
+        for (i in 0 until 4) {
+            val liveH = totalHeight * activeHeights[i]
+            // Morph smoothly from resting dot height (minHeight) to active bounce (liveH)
+            val barH = (minHeight + (liveH - minHeight) * playProgress).coerceIn(minHeight, totalHeight)
+            val left = i * (barWidth + gap)
+            val top = (totalHeight - barH) / 2f
+
+            drawRoundRect(
+                color = barColor,
+                topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                size = androidx.compose.ui.geometry.Size(barWidth, barH),
+                cornerRadius = cornerRadius
+            )
+        }
     }
 }
-
 private fun formatDuration(millis: Long): String {
     if (millis <= 0L) return "0:00"
     val totalSeconds = (millis / 1000).coerceAtLeast(0)

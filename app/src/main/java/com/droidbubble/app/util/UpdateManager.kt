@@ -32,8 +32,8 @@ sealed interface UpdateCheckResult {
 
 object UpdateManager {
 
-    private const val GITHUB_RELEASES_API = "https://api.github.com/repos/Velocity081/droidbubble/releases"
-    private const val GITHUB_RELEASES_ATOM = "https://github.com/Velocity081/droidbubble/releases.atom"
+    private const val GITHUB_RELEASES_API = "https://api.github.com/repos/David4rr/droidbubble/releases"
+    private const val GITHUB_RELEASES_ATOM = "https://github.com/David4rr/droidbubble/releases.atom"
     private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Droidbubble) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
     fun getCurrentVersion(context: Context): String {

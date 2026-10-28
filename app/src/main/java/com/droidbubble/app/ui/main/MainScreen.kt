@@ -36,6 +36,10 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.ui.text.font.FontFamily
 import android.view.HapticFeedbackConstants
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.alpha
@@ -183,7 +187,8 @@ enum class MainScreenPage {
     MAIN,
     DIMENSIONS,
     APPEARANCE,
-    ACCESSIBILITY
+    ACCESSIBILITY,
+    SYSTEM_NOTIFICATIONS
 }
 
 
@@ -210,6 +215,7 @@ fun MainScreen(
     var showDimensionsPage by remember { mutableStateOf(false) }
     var showAppearancePage by remember { mutableStateOf(false) }
     var showAccessibilityPage by remember { mutableStateOf(false) }
+    var showSystemNotificationsPage by remember { mutableStateOf(false) }
     var showFeedbackSheet by remember { mutableStateOf(false) }
     var feedbackType by remember { mutableStateOf(FeedbackType.BUG) }
     var feedbackTitle by remember { mutableStateOf("") }
@@ -247,6 +253,7 @@ fun MainScreen(
         showDimensionsPage -> MainScreenPage.DIMENSIONS
         showAppearancePage -> MainScreenPage.APPEARANCE
         showAccessibilityPage -> MainScreenPage.ACCESSIBILITY
+        showSystemNotificationsPage -> MainScreenPage.SYSTEM_NOTIFICATIONS
         else -> MainScreenPage.MAIN
     }
 
@@ -301,6 +308,13 @@ fun MainScreen(
                     settings = settings,
                     onUpdateSettings = { viewModel.updateSettings(it) },
                     onBack = { showAccessibilityPage = false },
+                    modifier = modifier
+                )
+            }
+            MainScreenPage.SYSTEM_NOTIFICATIONS -> {
+                SystemNotificationsPage(
+                    viewModel = viewModel,
+                    onBack = { showSystemNotificationsPage = false },
                     modifier = modifier
                 )
             }
@@ -575,7 +589,7 @@ fun MainScreen(
                         )
                     }
 
-                    SettingsCardItem(position = GroupPosition.BOTTOM) {
+                    SettingsCardItem(position = GroupPosition.MIDDLE) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             modifier = Modifier.clickable { showAccessibilityPage = true },
@@ -587,6 +601,26 @@ fun MainScreen(
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowForwardIos,
                                     contentDescription = "Open Accessibility",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.clickable { showSystemNotificationsPage = true },
+                            headlineContent = { Text("System Notifications & Shizuku", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text("Block default heads-up popups & hide status icons", style = MaterialTheme.typography.bodySmall) },
+                            leadingContent = {
+                                Icon(Icons.Default.NotificationsOff, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                    contentDescription = "Open System Notifications",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -2198,5 +2232,236 @@ private fun SliderSettingItemPct(
             }
         }
         Slider(value = value, onValueChange = onValueChange, valueRange = valueRange, modifier = Modifier.height(28.dp))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SystemNotificationsPage(
+    viewModel: MainScreenViewModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BackHandler(onBack = onBack)
+    val context = LocalContext.current
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    val isHeadsUpDisabled by viewModel.isHeadsUpDisabled.collectAsState()
+    val isStatusBarHidden by viewModel.isStatusBarHidden.collectAsState()
+    val isShizukuAvailable by viewModel.isShizukuAvailable.collectAsState()
+    val hasShizukuPermission by viewModel.hasShizukuPermission.collectAsState()
+
+    DisposableEffect(Unit) {
+        viewModel.checkShizukuStatus(context)
+        onDispose {}
+    }
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("System Notifications", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Shizuku Service Status Banner
+            item {
+                val isReady = isShizukuAvailable && hasShizukuPermission
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (isReady) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (isReady) Icons.Default.CheckCircle else Icons.Default.Info,
+                                contentDescription = null,
+                                tint = if (isReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = if (isReady) "Shizuku Service Active"
+                                       else if (isShizukuAvailable) "Shizuku Permission Required"
+                                       else "Shizuku Not Connected",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = if (isReady) "Direct system settings access is active. You can block native notification banners and hide status bar icons with 1 tap."
+                                   else if (isShizukuAvailable) "Shizuku is running. Tap below to authorize Droidbubble to control system notification banners."
+                                   else "Shizuku allows Droidbubble to toggle Android's heads-up notification banners directly on your phone without a PC.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (!isReady) {
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (isShizukuAvailable) {
+                                    Button(
+                                        onClick = { viewModel.requestShizukuPermission() },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("Authorize Shizuku")
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { com.droidbubble.app.util.ShizukuHelper.openShizukuOrStore(context) },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("Open / Setup Shizuku")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Toggles
+            item {
+                SectionHeader(
+                    title = "System Pop-up Controls",
+                    icon = Icons.Default.Tune
+                )
+            }
+
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SettingsCardItem(position = GroupPosition.TOP, isActive = isHeadsUpDisabled) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Block Default Pop-up Banners", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = {
+                                Text("Disables Android's rectangular drop-down banners so incoming notifications only pop up through Droidbubble's Dynamic Island")
+                            },
+                            leadingContent = {
+                                Icon(Icons.Default.NotificationsOff, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = isHeadsUpDisabled,
+                                    onCheckedChange = { block ->
+                                        if (!isShizukuAvailable && !com.droidbubble.app.util.ShizukuHelper.hasWriteSecureSettings(context)) {
+                                            Toast.makeText(context, "Requires Shizuku or WRITE_SECURE_SETTINGS", Toast.LENGTH_SHORT).show()
+                                        }
+                                        viewModel.toggleBlockHeadsUp(context, block)
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = isStatusBarHidden) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Hide Status Bar System Icons", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = {
+                                Text("Hides native clock, battery, and signal icons to keep the camera punch-hole area clean")
+                            },
+                            leadingContent = {
+                                Icon(Icons.Default.VisibilityOff, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = isStatusBarHidden,
+                                    onCheckedChange = { hide ->
+                                        if (!isShizukuAvailable && !com.droidbubble.app.util.ShizukuHelper.hasWriteSecureSettings(context)) {
+                                            Toast.makeText(context, "Requires Shizuku or WRITE_SECURE_SETTINGS", Toast.LENGTH_SHORT).show()
+                                        }
+                                        viewModel.toggleHideStatusBarIcons(context, hide)
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ADB Alternative
+            item {
+                SectionHeader(
+                    title = "Manual ADB Alternative",
+                    icon = Icons.Default.Terminal
+                )
+            }
+
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "If you don't use Shizuku, run this command once via a PC or Wireless Debugging to block default banners:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.Black.copy(alpha = 0.6f)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "settings put global heads_up_notifications_enabled 0",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.5.sp,
+                                    color = Color(0xFF64D2FF),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(
+                                    onClick = {
+                                        clipboardManager.setText(
+                                            androidx.compose.ui.text.AnnotatedString("adb shell settings put global heads_up_notifications_enabled 0")
+                                        )
+                                        Toast.makeText(context, "Copied ADB command to clipboard", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy command",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
