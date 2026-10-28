@@ -654,8 +654,9 @@ class IslandOverlayService : Service() {
                     IslandStateManager.activeCharging,
                     IslandStateManager.isUnlocked,
                     IslandStateManager.isBluetoothConnected,
-                    IslandStateManager.activeRingerMode
-                ) { _, _, _, _ -> Unit }
+                    IslandStateManager.activeRingerMode,
+                    IslandStateManager.isFlashlightOn
+                ) { _, _, _, _, _ -> Unit }
             ) { expanded, _, _ -> expanded }.collectLatest { expanded ->
                 updateWindowState(expanded)
             }
@@ -771,14 +772,23 @@ class IslandOverlayService : Service() {
             val isUnlock = IslandStateManager.isUnlockActive
             val isBluetooth = currentSettings.showBluetooth && IslandStateManager.isBluetoothActive
             val isRingerMode = currentSettings.showRingerMode && IslandStateManager.isRingerModeActive
-            val isOccupied = IslandStateManager.isOccupied
+            val isFlashlight = currentSettings.showFlashlight && IslandStateManager.isFlashlightActive
+            val isOccupied = (currentSettings.showMedia && IslandStateManager.isMediaActive) ||
+                    (currentSettings.showNotifications && IslandStateManager.isNotificationActive) ||
+                    (currentSettings.showLiveProgress && IslandStateManager.isProgressActive) ||
+                    (currentSettings.showScreenRecording && IslandStateManager.isRecordingActive) ||
+                    isFlashlight ||
+                    isCharging ||
+                    isUnlock ||
+                    isBluetooth ||
+                    isRingerMode
             val hasPersistentWidgets = currentSettings.showFps || currentSettings.showWeather || currentSettings.showNetworkSpeed
             val shouldShowCompact = isOccupied || currentSettings.alwaysShowPill || hasPersistentWidgets
-            val activeCount = (if (IslandStateManager.isRecordingActive) 1 else 0) +
-                    (if (IslandStateManager.isNotificationActive) 1 else 0) +
-                    (if (IslandStateManager.isMediaActive) 1 else 0) +
-                    (if (IslandStateManager.isProgressActive) 1 else 0) +
-                    (if (IslandStateManager.isFlashlightActive) 1 else 0)
+            val activeCount = (if (currentSettings.showScreenRecording && IslandStateManager.isRecordingActive) 1 else 0) +
+                    (if (currentSettings.showNotifications && IslandStateManager.isNotificationActive) 1 else 0) +
+                    (if (currentSettings.showMedia && IslandStateManager.isMediaActive) 1 else 0) +
+                    (if (currentSettings.showLiveProgress && IslandStateManager.isProgressActive) 1 else 0) +
+                    (if (isFlashlight) 1 else 0)
             val isDual = !isCharging && !isUnlock && !isBluetooth && !isRingerMode && activeCount >= 2
 
             val totalWidthDp = if (isCharging) {
@@ -853,7 +863,7 @@ class IslandOverlayService : Service() {
                 collapseJob?.cancel()
                 collapseJob = serviceScope.launch {
                     kotlinx.coroutines.delay(360)
-                    if (!IslandStateManager.isOccupied && !IslandStateManager.isExpanded.value && !currentSettings.alwaysShowPill && !hasPersistentWidgets) {
+                    if (!isOccupied && !IslandStateManager.isExpanded.value && !currentSettings.alwaysShowPill && !hasPersistentWidgets) {
                         applyLayoutParams(
                             view = view,
                             params = params,

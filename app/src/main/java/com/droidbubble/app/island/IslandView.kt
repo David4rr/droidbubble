@@ -395,7 +395,7 @@ fun IslandOverlayRoot(
     val isProgress = allowInOrientation && currentProgress != null && settings.showLiveProgress
     val isNotification = allowInOrientation && currentNotif != null && settings.showNotifications
     val isMedia = allowInOrientation && currentMedia != null && (!settings.dismissMediaOnPause || currentMedia.isPlaying) && (currentMedia.isPlaying || currentMedia.title.isNotBlank()) && settings.showMedia
-    val isFlashlight = allowInOrientation && isFlashlightOn
+    val isFlashlight = allowInOrientation && settings.showFlashlight && isFlashlightOn
     val isCharging = allowInOrientation && settings.showCharging && charging != null
     val isUnlock = allowInOrientation && isUnlocked && !isCharging
     val isBluetooth = allowInOrientation && settings.showBluetooth && isBluetoothConnected && !isCharging && !isUnlock
@@ -429,14 +429,17 @@ fun IslandOverlayRoot(
 
     // Primary & Secondary activity assignment ordered dynamically by settings.featurePriorities:
     val orderedEphemeralPriorities = buildList {
-        if (isFlashlight) add(IslandPriority.FLASHLIGHT)
         for (featureKey in settings.featurePriorities) {
             when (featureKey) {
                 "MEDIA" -> if (isMedia) add(IslandPriority.MEDIA)
                 "PROGRESS" -> if (isProgress) add(IslandPriority.PROGRESS)
                 "RECORDING" -> if (isRecording) add(IslandPriority.SCREEN_RECORDING)
                 "NOTIFICATION" -> if (isNotification) add(IslandPriority.POP_NOTIFICATION)
+                "FLASHLIGHT" -> if (isFlashlight) add(IslandPriority.FLASHLIGHT)
             }
+        }
+        if (isFlashlight && "FLASHLIGHT" !in settings.featurePriorities) {
+            add(IslandPriority.FLASHLIGHT)
         }
     }
 

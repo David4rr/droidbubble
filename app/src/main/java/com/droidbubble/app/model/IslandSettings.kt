@@ -4,7 +4,8 @@ val DEFAULT_FEATURE_PRIORITIES = listOf(
     "MEDIA",
     "PROGRESS",
     "RECORDING",
-    "NOTIFICATION"
+    "NOTIFICATION",
+    "FLASHLIGHT"
 )
 
 data class IslandSettings(
@@ -23,6 +24,7 @@ data class IslandSettings(
     val showNotifications: Boolean = false,
     val showLiveProgress: Boolean = true,
     val showScreenRecording: Boolean = true,
+    val showFlashlight: Boolean = true,
     val showBluetooth: Boolean = true,
     val showCharging: Boolean = true,
     val showRingerMode: Boolean = true,

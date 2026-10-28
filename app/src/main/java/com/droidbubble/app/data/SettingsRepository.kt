@@ -34,6 +34,7 @@ class SettingsRepository(private val context: Context) {
         val SHOW_NOTIFICATIONS = booleanPreferencesKey("show_notifications")
         val SHOW_LIVE_PROGRESS = booleanPreferencesKey("show_live_progress")
         val SHOW_SCREEN_RECORDING = booleanPreferencesKey("show_screen_recording")
+        val SHOW_FLASHLIGHT = booleanPreferencesKey("show_flashlight")
         val SHOW_BLUETOOTH = booleanPreferencesKey("show_bluetooth")
         val SHOW_CHARGING = booleanPreferencesKey("show_charging")
         val SHOW_RINGER_MODE = booleanPreferencesKey("show_ringer_mode")
@@ -84,6 +85,7 @@ class SettingsRepository(private val context: Context) {
             showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
             showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
             showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+            showFlashlight = preferences[PreferencesKeys.SHOW_FLASHLIGHT] ?: true,
             showBluetooth = preferences[PreferencesKeys.SHOW_BLUETOOTH] ?: true,
             showCharging = preferences[PreferencesKeys.SHOW_CHARGING] ?: true,
             showRingerMode = preferences[PreferencesKeys.SHOW_RINGER_MODE] ?: true,
@@ -142,6 +144,7 @@ class SettingsRepository(private val context: Context) {
                 showNotifications = preferences[PreferencesKeys.SHOW_NOTIFICATIONS] ?: false,
                 showLiveProgress = preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] ?: true,
                 showScreenRecording = preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] ?: true,
+            showFlashlight = preferences[PreferencesKeys.SHOW_FLASHLIGHT] ?: true,
                 showBluetooth = preferences[PreferencesKeys.SHOW_BLUETOOTH] ?: true,
                 showCharging = preferences[PreferencesKeys.SHOW_CHARGING] ?: true,
                 showRingerMode = preferences[PreferencesKeys.SHOW_RINGER_MODE] ?: true,
@@ -190,6 +193,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.SHOW_NOTIFICATIONS] = newSettings.showNotifications
             preferences[PreferencesKeys.SHOW_LIVE_PROGRESS] = newSettings.showLiveProgress
             preferences[PreferencesKeys.SHOW_SCREEN_RECORDING] = newSettings.showScreenRecording
+            preferences[PreferencesKeys.SHOW_FLASHLIGHT] = newSettings.showFlashlight
             preferences[PreferencesKeys.SHOW_BLUETOOTH] = newSettings.showBluetooth
             preferences[PreferencesKeys.SHOW_CHARGING] = newSettings.showCharging
             preferences[PreferencesKeys.SHOW_RINGER_MODE] = newSettings.showRingerMode

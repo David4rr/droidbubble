@@ -80,6 +80,7 @@ import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Wifi
@@ -595,76 +596,7 @@ fun MainScreen(
                 }
             }
 
-            // SECTION 5A: SYSTEM ALERTS & INDICATORS (ALWAYS TOP PRIORITY)
-            item {
-                SectionHeader(
-                    title = "System Alerts",
-                    icon = Icons.Default.NotificationsActive
-                )
-            }
-
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    SettingsCardItem(position = GroupPosition.TOP, isActive = settings.showBluetooth) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Bluetooth Connecting", fontWeight = FontWeight.SemiBold) },
-                            leadingContent = {
-                                Icon(Icons.Default.Bluetooth, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.showBluetooth,
-                                    onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showBluetooth = show) }
-                                    }
-                                )
-                            }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.showCharging) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Charging Indicator", fontWeight = FontWeight.SemiBold) },
-                            leadingContent = {
-                                Icon(Icons.Default.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.showCharging,
-                                    onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showCharging = show) }
-                                    }
-                                )
-                            }
-                        )
-                    }
-
-                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = settings.showRingerMode) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("Ring Modes", fontWeight = FontWeight.SemiBold) },
-                            leadingContent = {
-                                Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = settings.showRingerMode,
-                                    onCheckedChange = { show ->
-                                        viewModel.updateSettings { it.copy(showRingerMode = show) }
-                                    }
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-
-            // SECTION 5B: ISLAND ACTIVITIES (DRAG TO REORDER PRIORITY)
+            // SECTION 5A: ISLAND ACTIVITIES (DRAG TO REORDER PRIORITY)
             item {
                 SectionHeader(
                     title = "Island Activities",
@@ -674,7 +606,7 @@ fun MainScreen(
 
             item {
                 val reorderableKeys = remember {
-                    val valid = listOf("MEDIA", "NOTIFICATION", "PROGRESS", "RECORDING")
+                    val valid = listOf("MEDIA", "NOTIFICATION", "PROGRESS", "RECORDING", "FLASHLIGHT")
                     val list = settings.featurePriorities.filter { it in valid }.toMutableList()
                     for (v in valid) {
                         if (v !in list) list.add(v)
@@ -688,7 +620,7 @@ fun MainScreen(
 
                 LaunchedEffect(settings.featurePriorities) {
                     if (draggingKey == null) {
-                        val valid = listOf("MEDIA", "NOTIFICATION", "PROGRESS", "RECORDING")
+                        val valid = listOf("MEDIA", "NOTIFICATION", "PROGRESS", "RECORDING", "FLASHLIGHT")
                         val list = settings.featurePriorities.filter { it in valid }.toMutableList()
                         for (v in valid) {
                             if (v !in list) list.add(v)
@@ -750,6 +682,7 @@ fun MainScreen(
                                 "NOTIFICATION" -> settings.showNotifications
                                 "PROGRESS" -> settings.showLiveProgress
                                 "RECORDING" -> settings.showScreenRecording
+                                "FLASHLIGHT" -> settings.showFlashlight
                                 else -> false
                             }
 
@@ -758,6 +691,7 @@ fun MainScreen(
                                 "NOTIFICATION" -> "Incoming Notifications"
                                 "PROGRESS" -> "Live Progress & Activities"
                                 "RECORDING" -> "Screen Recording Indicator"
+                                "FLASHLIGHT" -> "Flashlight Indicator"
                                 else -> currentKey
                             }
 
@@ -766,6 +700,7 @@ fun MainScreen(
                                 "NOTIFICATION" -> Icons.Default.Notifications
                                 "PROGRESS" -> Icons.Default.Animation
                                 "RECORDING" -> Icons.Default.Videocam
+                                "FLASHLIGHT" -> Icons.Default.FlashlightOn
                                 else -> Icons.Default.Apps
                             }
 
@@ -867,6 +802,7 @@ fun MainScreen(
                                                         "NOTIFICATION" -> s.copy(showNotifications = checked)
                                                         "PROGRESS" -> s.copy(showLiveProgress = checked)
                                                         "RECORDING" -> s.copy(showScreenRecording = checked)
+                                                        "FLASHLIGHT" -> s.copy(showFlashlight = checked)
                                                         else -> s
                                                     }
                                                 }
@@ -876,6 +812,75 @@ fun MainScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // SECTION 5B: SYSTEM ALERTS & INDICATORS (ALWAYS TOP PRIORITY)
+            item {
+                SectionHeader(
+                    title = "System Alerts",
+                    icon = Icons.Default.NotificationsActive
+                )
+            }
+
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SettingsCardItem(position = GroupPosition.TOP, isActive = settings.showBluetooth) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Bluetooth Connecting", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.Bluetooth, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.showBluetooth,
+                                    onCheckedChange = { show ->
+                                        viewModel.updateSettings { it.copy(showBluetooth = show) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.MIDDLE, isActive = settings.showCharging) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Charging Indicator", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.showCharging,
+                                    onCheckedChange = { show ->
+                                        viewModel.updateSettings { it.copy(showCharging = show) }
+                                    }
+                                )
+                            }
+                        )
+                    }
+
+                    SettingsCardItem(position = GroupPosition.BOTTOM, isActive = settings.showRingerMode) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text("Ring Modes", fontWeight = FontWeight.SemiBold) },
+                            leadingContent = {
+                                Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = settings.showRingerMode,
+                                    onCheckedChange = { show ->
+                                        viewModel.updateSettings { it.copy(showRingerMode = show) }
+                                    }
+                                )
+                            }
+                        )
                     }
                 }
             }
