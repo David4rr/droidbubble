@@ -876,9 +876,9 @@ class IslandOverlayService : Service() {
             if (wasExpanded) {
                 wasExpanded = false
                 isCollapsing = true
-                // Keep MATCH_PARENT for 400ms so the user sees the collapse animation smoothly finish in full!
+                // Keep MATCH_PARENT for 650ms so the user sees the collapse spring animation smoothly settle in full
                 collapseJob = serviceScope.launch {
-                    kotlinx.coroutines.delay(400)
+                    kotlinx.coroutines.delay(650)
                     isCollapsing = false
                     if (!IslandStateManager.isExpanded.value) {
                         applyCompactBounds()

@@ -493,63 +493,31 @@ fun IslandOverlayRoot(
     val speed = settings.animationSpeed.coerceIn(0.5f, 2.0f)
     val speedSq = speed * speed
 
-    // Animation Specs (dynamically scaled by settings.animationSpeed):
-    val sizeAnimSpecDp = when {
-        isCharging || isUnlock || isBluetooth || isRingerMode -> spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = settings.appearDamping,
-            stiffness = settings.appearStiffness * speedSq
-        )
-        isExpanded -> spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = settings.expandDamping,
-            stiffness = settings.expandStiffness * speedSq
-        )
-        else -> tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = (190 / speed).roundToInt(),
-            easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
-        )
-    }
+    // Apple Dynamic Island fluid spring physics:
+    // Damping ~0.76f (bouncy organic feel, exact Apple Dynamic Island spring characteristic)
+    // Stiffness ~360f - 400f (swift responsive spring)
+    val expandSpringDamping = settings.expandDamping.coerceIn(0.68f, 0.84f)
+    val expandSpringStiffness = (settings.expandStiffness * speedSq).coerceIn(260f, 600f)
 
-    val sizeAnimSpecFloat = when {
-        isCharging || isUnlock || isBluetooth || isRingerMode -> spring<Float>(
-            dampingRatio = settings.appearDamping,
-            stiffness = settings.appearStiffness * speedSq
-        )
-        isExpanded -> spring<Float>(
-            dampingRatio = settings.expandDamping,
-            stiffness = settings.expandStiffness * speedSq
-        )
-        else -> tween<Float>(
-            durationMillis = (190 / speed).roundToInt(),
-            easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
-        )
-    }
+    val sizeAnimSpecDp = spring<androidx.compose.ui.unit.Dp>(
+        dampingRatio = if (isCharging || isUnlock || isBluetooth || isRingerMode) settings.appearDamping else expandSpringDamping,
+        stiffness = if (isCharging || isUnlock || isBluetooth || isRingerMode) settings.appearStiffness * speedSq else expandSpringStiffness
+    )
 
-    val positionAnimSpecDp = if (isExpanded) {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = settings.expandDamping,
-            stiffness = settings.expandStiffness * speedSq
-        )
-    } else {
-        tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = (200 / speed).roundToInt(),
-            easing = CubicBezierEasing(0.28f, 0.0f, 0.20f, 1.0f)
-        )
-    }
+    val sizeAnimSpecFloat = spring<Float>(
+        dampingRatio = if (isCharging || isUnlock || isBluetooth || isRingerMode) settings.appearDamping else expandSpringDamping,
+        stiffness = if (isCharging || isUnlock || isBluetooth || isRingerMode) settings.appearStiffness * speedSq else expandSpringStiffness
+    )
 
-    // Dedicated spec for compact pill width:
-    // When expanding: crisp spring shrinking into 0 width without overshoot
-    // When emerging back: subtle horizontal bounce of a few pixels (dampingRatio = 0.63f)!
-    val compactPillWidthAnimSpec = if (isExpanded) {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = 0.82f,
-            stiffness = 380f * speedSq
-        )
-    } else {
-        spring<androidx.compose.ui.unit.Dp>(
-            dampingRatio = settings.splitDamping,
-            stiffness = settings.splitStiffness * speedSq
-        )
-    }
+    val positionAnimSpecDp = spring<androidx.compose.ui.unit.Dp>(
+        dampingRatio = expandSpringDamping,
+        stiffness = expandSpringStiffness
+    )
+
+    val compactPillWidthAnimSpec = spring<androidx.compose.ui.unit.Dp>(
+        dampingRatio = settings.splitDamping,
+        stiffness = settings.splitStiffness * speedSq
+    )
 
     val expandProgress by animateFloatAsState(
         targetValue = if (isExpanded && !isCharging && !isUnlock && !isBluetooth && !isRingerMode) 1f else 0f,
@@ -761,27 +729,24 @@ fun IslandOverlayRoot(
     val unlockIslandWidth = (settings.widthDp * 0.82f).dp.coerceAtLeast(108.dp)
     val ringerIslandWidth = (settings.widthDp * 0.95f).dp.coerceAtLeast(130.dp)
 
-    // Minimised Island Pill: sits docked at settings.topOffsetDp.dp.
-    // When expanding, it animates from its compact width down to 0.dp.
-    // When minimising, it animates from 0.dp back to its compact width.
-    val targetCompactWidth = when {
+    // Resting Compact Island Pill: sits docked at settings.topOffsetDp.dp
+    val restingCompactWidth = when {
         !isOccupied && !settings.alwaysShowPill && !hasPersistent -> 0.dp
-        isExpanded -> 0.dp // Shrinks horizontally into 0 width while card expands!
         isCharging -> chargingIslandWidth
         isRingerMode -> ringerIslandWidth
         isUnlock || isBluetooth -> unlockIslandWidth
         isDual -> (settings.widthDp * 0.74f).dp
         else -> settings.widthDp.dp
     }
+    val targetCompactWidth = restingCompactWidth
 
     // Expanded Cards: Card 1 (and Card 2 if dual mode).
-    // When expanded, Card 1 slides down to (settings.topOffsetDp + 52).dp, widening to 340.dp * scale.
-    // When minimising, Card 1 shrinks back to 0.dp width (transitioning into the small circle at the punch hole) as it slides back up.
+    // Fluid morph between resting compact pill dimensions and expanded dimensions (Apple Dynamic Island spec)
     val screenWidth = configuration.screenWidthDp.dp
     val targetCard1Width = if (isExpanded && !isCharging && !isUnlock && !isBluetooth && !isRingerMode) {
         (340.dp * settings.expandedScale).coerceAtMost(screenWidth - 16.dp)
     } else {
-        0.dp
+        restingCompactWidth
     }
 
     val notifText = currentNotif?.text ?: ""
@@ -887,9 +852,9 @@ fun IslandOverlayRoot(
     }
 
     val targetTopOffset = if (isExpanded && !isCharging && !isUnlock && !isBluetooth && !isRingerMode) {
-        (settings.topOffsetDp + 52).dp // Sits way below initial position (comfortably below status bar) when expanded!
+        (settings.topOffsetDp + 8).dp // Snug anchor below punch hole cutout
     } else {
-        settings.topOffsetDp.dp // Docks right over the punch hole when minimised or charging/unlock/bluetooth/ringer
+        settings.topOffsetDp.dp
     }
 
     val targetCardSpacing = if (isExpanded && showSecondaryCard) 10.dp else 0.dp
@@ -1033,9 +998,7 @@ fun IslandOverlayRoot(
                                 .offset { IntOffset(animatedCard1OffsetX.roundToInt(), 0) }
                                 .width(animatedCard1Width)
                                 .height(animatedCard1Height)
-                                .graphicsLayer {
-                                    alpha = cardContainerAlpha
-                                }
+
                                 .clip(RoundedCornerShape(animatedCornerRadius))
                                 .background(if (animatedCard1Width > 2.dp) Color.Black else Color.Transparent)
                                 .then(
@@ -1439,7 +1402,11 @@ fun IslandOverlayRoot(
             // Applies to both single and dual activities!
             val circleThreshold = (settings.heightDp.dp * 0.95f).coerceAtLeast(10.dp)
             val emergenceProgress = (animatedCompactWidth / circleThreshold).coerceIn(0f, 1f)
-            val compactPillAlpha = emergenceProgress * emergenceProgress * (3f - 2f * emergenceProgress)
+            val compactPillAlpha = if (expandProgress > 0.001f || isExpanded) {
+                (1f - (expandProgress * 4.0f)).coerceIn(0f, 1f)
+            } else {
+                emergenceProgress * emergenceProgress * (3f - 2f * emergenceProgress)
+            }
 
             // 1. Auxiliary Circular Island Bubble: Placed on the LAYER BELOW (rendered first so main pill covers it!)
             // Fixed circular shape & size; emerges and retracts purely along the X axis from the middle of the punch hole (x = 0)
@@ -1522,7 +1489,7 @@ fun IslandOverlayRoot(
             }
 
             // 2. Main Compact Pill: Rendered on top of the bubble (covers it when sliding near x = 0)
-            if (animatedCompactWidth > 0.5.dp) {
+            if (animatedCompactWidth > 0.5.dp && compactPillAlpha > 0.01f) {
                 Box(
                     modifier = Modifier
                         .width(animatedCompactWidth)
